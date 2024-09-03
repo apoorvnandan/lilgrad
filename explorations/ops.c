@@ -10,7 +10,8 @@ int get_flat_index(int* indices, int* strides, int ndim) {
     return flat_index;
 }
 
-int add_broadcasted(
+int op_broadcasted(
+        char op,
         float* a,
         int* shape_a,
         int* strides_a,
@@ -29,9 +30,9 @@ int add_broadcasted(
         if (dim < ndim_a && dim < ndim_b) {
             int dim_a = ndim_a - 1 - dim;
             int dim_b = ndim_b - 1 - dim;
-            if (shape_a[dim_a] != shape_b[dim_a]) {
+            if (shape_a[dim_a] != shape_b[dim_b]) {
                 if (shape_a[dim_a] != 1 && shape_b[dim_b] != 1) {
-                    printf("shapes cannot be broadcasted");
+                    printf("shapes cannot be broadcasted ndim_a %d ndim_b %d shape_a[ndim_a] %d shape_b[ndim_b] %d", ndim_a, ndim_b, shape_a[ndim_a], shape_b[ndim_b]);
                     return 1;
                 }
             }
@@ -69,7 +70,9 @@ int add_broadcasted(
         int idx_a = get_flat_index(indices_a, strides_a, ndim_a);
         int idx_b = get_flat_index(indices_b, strides_b, ndim_b);
         int idx_result = get_flat_index(indices, strides_result, ndim_result);
-        result[idx_result] = a[idx_a] + b[idx_b];
+        if (op == '+') {result[idx_result] = a[idx_a] + b[idx_b];}
+        if (op == '-') {result[idx_result] = a[idx_a] - b[idx_b];}
+        if (op == '*') {result[idx_result] = a[idx_a] * b[idx_b];}
 
         // increment indices
         for (int j = ndim_result - 1; j >= 0; j--) {

@@ -89,42 +89,6 @@ int op_broadcasted(
     return 0;
 }
 
-void add(float* a, float *b, float *c, size_t na, size_t nb) {
-    if (na == nb) {
-        for(size_t i = 0; i < na; i++) {
-            c[i] = a[i] + b[i];
-        }
-    } else if (nb == 1) {
-        for(size_t i = 0; i < na; i++) {
-            c[i] = a[i] + b[0];
-        }
-    }
-}
-
-void sub(float* a, float *b, float *c, size_t na, size_t nb) {
-    if (na == nb) {
-        for(size_t i = 0; i < na; i++) {
-            c[i] = a[i] - b[i];
-        }
-    } else if (nb == 1) {
-        for(size_t i = 0; i < na; i++) {
-            c[i] = a[i] - b[0];
-        }
-    }
-}
-
-void mul(float *a, float *b, float *c, size_t na, size_t nb) {
-    if (na == nb) {
-        for(size_t i = 0; i < na; i++) {
-            c[i] = a[i] * b[i];
-        }
-    } else if (nb == 1) {
-        for(size_t i = 0; i < na; i++) {
-            c[i] = a[i] * b[0];
-        }
-    }
-}
-
 void maximum(float* a, float* result, float value, size_t n) {
     for(size_t i = 0; i < n; i++) {
         if (a[i] > value) {
@@ -176,17 +140,96 @@ void zeros(float *a, size_t n) {
     }
 }
 
-void matmul(
-        float* a, 
-        float* b, 
-        float* result, 
+int matmul(
+        float* a,
         int* shape_a,
+        int* strides_a,
         int ndim_a,
+        float* b,
         int* shape_b,
-        int ndim_b
+        int* strides_b,
+        int ndim_b,
+        float* result,
+        int* shape_result,
+        int* strides_result,
+        int ndim_result
 ) {
-    // will support only (t x c) x (c x d) and (b x t x c) x (c x d) for now
-    // what about (b x t x h x w) x (w x d)
-    // broadcasted
-    
+    // is matmul possible
+    if (ndim_b == 1) {
+        if (shape_a[ndim_a - 1] != shape_b[0]) {
+            return 1;
+        }
+    } else {
+        if (shape_a[ndim_a - 1] != shape_b[ndim_b - 2]) {
+            return 1;
+        }
+    }
+    for (int dim_from_right = 2; dim_from_right < ndim_result; dim_from_right++) {
+        if (dim_from_right < ndim_a && dim_from_right < ndim_b) {
+            int dim_a = ndim_a - 1 - dim_from_right;
+            int dim_b = ndim_b - 1 - dim_from_right;
+            if (shape_a[dim_a] != shape_b[dim_b]) {
+                return 1;
+            }
+        }
+    } 
+    // calculating the result values
+    int* indices = calloc(ndim_result, sizeof(int));
+    int totalsize = 1;
+    for (int i = 0; i < ndim_result; i++) {
+        totalsize *= shape_result[i];
+    }
+    for (int i = 0; i < totalsize; i++) {
+        float value = 0.0f;
+        for (int j = 0; j < shape_a[ndim_a - 1]; j++) {
+            int* indices_a = (int*) calloc(ndim_a, sizeof(int));
+            int* indices_b = (int*) calloc(ndim_b, sizeof(int));
+            indices_a[ndim_a - 1] = j;
+            if (ndim_b == 1) {indices_b[0] = j;}
+            else {indices_b[ndim_b - 2] = j;}
+            for (int dim_from_right = 0; dim_from_right < ndim_result; dim_from_right++) {
+                int dim_from_left = ndim_result - 1 - dim_from_right;
+                if (dim_from_right == 0) {
+                    if (ndim_b == 1) {
+                        indices_b[0] = j;
+                    } else {
+                        indices_b[ndim_b - 1] = indices[dim_from_left];
+                    }
+                    indices_a[ndim_a - 1] = j;
+                    continue;
+                }
+                if (dim_from_right == 1) {
+                    if (ndim_b != 1) {
+                        indices_b[ndim_b - 2] = j;
+                    }
+                    indices_a[ndim_a - 2] = indices[dim_from_left];
+                    continue;
+                }
+                if (dim_from_right < ndim_a) {
+                    int dim_a = ndim_a - 1 - dim_from_right;
+                    indices_a[dim_a] = indices[dim_from_left];
+                }
+                if (dim_from_right < ndim_b) {
+                    int dim_b = ndim_b - 1 - dim_from_right;
+                    indices_b[dim_b] = indices[dim_from_left];
+                }
+            }
+            int pos_a = get_flat_index(indices_a, strides_a, ndim_a);
+            int pos_b = get_flat_index(indices_b, strides_b, ndim_b);
+            value += a[pos_a] * b[pos_b];
+            free(indices_a);
+            free(indices_b);
+        }
+        int pos_result = get_flat_index(indices, strides_result, ndim_result);
+        result[pos_result] = value;
+        // increment indices
+        for (int j = ndim_result - 1; j >= 0; j--) {
+            indices[j]++;
+            if (indices[j] < shape_result[j]) {
+                break;
+            }
+            indices[j] = 0;
+        }
+    }
+    return 0;
 }

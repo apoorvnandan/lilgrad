@@ -21,31 +21,22 @@ lib.op_broadcasted.argtypes = [
 ]
 lib.op_broadcasted.restype = ctypes.c_int
 
-lib.add.argtypes = [
+lib.matmul.argtypes = [
         ctypes.POINTER(ctypes.c_float),
-        ctypes.POINTER(ctypes.c_float), 
+        ctypes.POINTER(ctypes.c_int), 
+        ctypes.POINTER(ctypes.c_int), 
+        ctypes.c_int,
         ctypes.POINTER(ctypes.c_float),
-        ctypes.c_size_t,
-        ctypes.c_size_t
+        ctypes.POINTER(ctypes.c_int), 
+        ctypes.POINTER(ctypes.c_int), 
+        ctypes.c_int,
+        ctypes.POINTER(ctypes.c_float),
+        ctypes.POINTER(ctypes.c_int), 
+        ctypes.POINTER(ctypes.c_int), 
+        ctypes.c_int,
 ]
-lib.add.restype = None
+lib.matmul.restype = ctypes.c_int
 
-lib.sub.argtypes = [
-        ctypes.POINTER(ctypes.c_float),
-        ctypes.POINTER(ctypes.c_float), 
-        ctypes.POINTER(ctypes.c_float), ctypes.c_size_t,
-        ctypes.c_size_t
-]
-lib.sub.restype = None
-
-lib.mul.argtypes = [
-        ctypes.POINTER(ctypes.c_float),
-        ctypes.POINTER(ctypes.c_float), 
-        ctypes.POINTER(ctypes.c_float),
-        ctypes.c_size_t,
-        ctypes.c_size_t
-]
-lib.sub.restype = None
 
 lib.logfloat.argtypes = [ctypes.POINTER(ctypes.c_float), ctypes.c_size_t]
 lib.logfloat.restype = None
@@ -96,6 +87,41 @@ def create_strides_from_shape(shape, itemsize=1):
     for s in shape[1:][::-1]:
         strides.append(strides[-1] * s)
     return list(reversed(strides))
+
+def calculate_matmul_shape(shape_a_ctype, shape_b_ctype):
+    shape_a = list(shape_a_ctype)
+    shape_b = list(shape_b_ctype)
+    # Ensure shape_a has at least two dimensions
+    if len(shape_a) < 2:
+        raise ValueError("Matrix A must be at least 2-dimensional for matrix multiplication.")
+    
+    # If shape_b has only one dimension, treat it as a column vector for multiplication
+    if len(shape_b) == 1:
+        if shape_b[0] != shape_a[-1]:
+            raise ValueError(f"Cannot multiply: the number of elements in B ({shape_b[0]}) does not match the last dimension of A ({shape_a[-1]}).")
+        # The result will be the shape of A without the last dimension
+        return shape_a[:-1]
+    
+    # Check if standard matrix multiplication is possible
+    if shape_a[-1] != shape_b[-2]:
+        raise ValueError(f"Cannot multiply the matrices. Dimension mismatch: {shape_a[-1]} vs {shape_b[-2]}")
+
+    # Construct the result shape
+    result_shape = shape_a[:-2] + [shape_a[-2]] + (list(shape_b[-1:]) if len(shape_b) > 1 else [])
+    
+    # Handle broadcasting for extra dimensions
+    broadcast_shape_a = shape_a[:-2]
+    broadcast_shape_b = shape_b[:-2] if len(shape_b) > 1 else [1]  # Treat B as having a leading 1 for broadcasting if it's 1D or 2D
+    
+    max_dim = max(len(broadcast_shape_a), len(broadcast_shape_b))
+    broadcast_shape_a = [1] * (max_dim - len(broadcast_shape_a)) + list(broadcast_shape_a)
+    broadcast_shape_b = [1] * (max_dim - len(broadcast_shape_b)) + list(broadcast_shape_b)
+
+    for i in range(max_dim):
+        if broadcast_shape_a[i] != 1 and broadcast_shape_b[i] != 1 and broadcast_shape_a[i] != broadcast_shape_b[i]:
+            raise ValueError(f"Broadcasting error: non-matmul dimensions do not match or are not 1 at dimension {i}")
+
+    return result_shape
 
 class Array:
     def __init__(self, data, shape, dtype='float'):
@@ -158,20 +184,34 @@ class Array:
             assert False, "shapes cannot be broadcasted during addition"
         return Array(d, shape)
 
-    def __add__(self, other):
-        return self.elementwise_op(other, b'+')
+    def __add__(self, other): return self.elementwise_op(other, b'+')
 
-    def __sub__(self, other):
-        return self.elementwise_op(other, b'-')
+    def __sub__(self, other): return self.elementwise_op(other, b'-')
 
-    def __mul__(self, other):
-        return self.elementwise_op(other, b'*')
+    def __mul__(self, other): return self.elementwise_op(other, b'*')
 
-    def __str__(self):
-        return str(list(self.data))
+    @staticmethod
+    def matmul(a, b):
+        shape_result = calculate_matmul_shape(a.shape, b.shape) 
+        strides_result = create_strides_from_shape(shape_result)
+        shape = create_c_compat_array(shape_result, 'int')
+        strides = create_c_compat_array(strides_result, 'int')
+        size_result = 1
+        for s in shape_result:
+            size_result *= s
+        d = (ctypes.c_float * size_result)()
+        err = lib.matmul(
+                a.data, a.shape, a.strides, a.ndim,
+                b.data, b.shape, b.strides, b.ndim,
+                d, shape, strides, len(shape_result)
+        )
+        if err == 1:
+            assert False
+        return Array(d, shape)
 
-    def list(self):
-        return list(self.data)
+    def __str__(self): return str(list(self.data))
+
+    def list(self): return list(self.data)
     
     def exp(self):
         d = (ctypes.c_float * self.size)()
@@ -197,33 +237,24 @@ class Array:
 
     def maximum(x, value):
         d = (ctypes.c_float * x.size)()
-        lib.maximum(x, d, value, x.size)
+        lib.maximum(x.data, d, value, x.size)
         return Array(d, x.shape)
-
-def logsoftmax(x):
-    pass
+    
 
 
-x = Array.randn([8,4,1])
-y = Array.randn([4])
-z = x + y
-z1 = x - y
-z2 = x * y
 
-import numpy as np
 
-a = np.array(x.list()).reshape([8,4,1])
-b = np.array(y.list()).reshape([4])
-c = a + b
-c1 = a - b
-c2 = a * b
+class FeedForwardNet:
+    def __init__(self):
+        self.w1 = Array.randn([784, 128])
+        self.w2 = Array.randn([128,10])
 
-def compare(nparr, arr):
-    p = list(nparr.flatten())
-    q = arr.list()
-    print(sum([abs(p[i] - q[i]) for i in range(len(p))]))
-
-compare(c, z)
-compare(c1, z1)
-compare(c2, z2)
-
+    def forward(self, x):
+        x1 = Array.matmul(x, self.w1)
+        x2 = Array.maximum(x1, 0)
+        return Array.matmul(x2, self.w2)
+        
+x = Array.randn([4,784]) 
+net = FeedForwardNet()
+y = net.forward(x)
+print(list(y.shape))

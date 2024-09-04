@@ -58,6 +58,31 @@ lib.sum.argtypes = [
 ]
 lib.sum.restype = None
 
+lib.sum_reduce.argtypes = [
+        ctypes.POINTER(ctypes.c_float),
+        ctypes.POINTER(ctypes.c_int),
+        ctypes.POINTER(ctypes.c_int),
+        ctypes.c_int,
+        ctypes.POINTER(ctypes.c_float),
+        ctypes.POINTER(ctypes.c_int),
+        ctypes.POINTER(ctypes.c_int),
+        ctypes.c_int,
+]
+lib.sum_reduce.restype = None
+
+lib.max_reduce.argtypes = [
+        ctypes.POINTER(ctypes.c_float),
+        ctypes.POINTER(ctypes.c_int),
+        ctypes.POINTER(ctypes.c_int),
+        ctypes.c_int,
+        ctypes.POINTER(ctypes.c_float),
+        ctypes.POINTER(ctypes.c_int),
+        ctypes.POINTER(ctypes.c_int),
+        ctypes.c_int,
+]
+lib.max_reduce.restype = None
+
+
 lib.maximum.argtypes = [
         ctypes.POINTER(ctypes.c_float),
         ctypes.POINTER(ctypes.c_float),
@@ -224,10 +249,21 @@ class Array:
         return Array(d, self.shape)
 
     @staticmethod
-    def sum(x):
-        d = (ctypes.c_float)()
-        lib.sum(x.data, d, self.size)
-        return Array(d, [1])
+    def sum(x, axis=None):
+        if axis is None:
+            d = (ctypes.c_float)()
+            lib.sum(x.data, d, self.size)
+            return Array(d, [1])
+        d = (ctypes.c_float * (x.size - x.shape[axis]))()
+        shape_result = [x.shape[i] for i in range(x.ndim) if i != axis]
+        strides_result = create_strides_from_shape(shape_result)
+        shape = create_c_compat_array(shape_result, 'int')
+        strides = create_c_compat_array(strides_result, 'int')
+        lib.sum_reduce(
+                x.data, x.shape, x.strides, x.ndim,
+                d, shape, strides, axis
+        )
+        return Array(d, shape)
     
     @staticmethod
     def mean(x):
@@ -235,26 +271,115 @@ class Array:
         lib.mean(x.data, d, self.size)
         return Array(d, [1])
 
+    @staticmethod
+    def max(x, axis):
+        d = (ctypes.c_float * (x.size - x.shape[axis]))()
+        shape_result = [x.shape[i] for i in range(x.ndim) if i != axis]
+        strides_result = create_strides_from_shape(shape_result)
+        shape = create_c_compat_array(shape_result, 'int')
+        strides = create_c_compat_array(strides_result, 'int')
+        lib.max_reduce(
+                x.data, x.shape, x.strides, x.ndim,
+                d, shape, strides, axis
+        )
+        return Array(d, shape)
+
     def maximum(x, value):
         d = (ctypes.c_float * x.size)()
         lib.maximum(x.data, d, value, x.size)
         return Array(d, x.shape)
-    
+
+    def reshape(self, new_shape):
+        if -1 in new_shape:
+            remaining = 0
+            for s in new_shape:
+                if s != -1:
+                    remaining += s
+            for i in range(len(new_shape)):
+                if new_shape[i] == -1:
+                    new_shape[i] = self.size - remaining
+        shape = create_c_compat_array(new_shape, 'int')
+        strides = create_strides_from_shape(new_shape)
+        self.shape = shape
+        self.strides = strides
+        self.ndim = len(new_shape)
+
+
+def logsoftmax(a):
+    max_vals = Array.max(a, axis=1)
+    x = a - max_vals
+    exp_a = x.exp()
+    sum_exp_a = Array.sum(exp_a, axis=1)
+    c = a - max_vals - sum_exp_a.log()
+    return c 
+
+
+class Tensor:
+    def __init__(self, data, name=''):
+        self.data = data  # instance of array
+        self.grad = Array.zeros_like(self.data)
+        self.parents = []
+        self.op = ''
+        self.name = name
+
+    @staticmethod
+    def randn(shape):
+        data = Array.randn(shape)
+        return Tensor(data)
+
+    def backward(self, grad=None):
+        if grad is None:
+            grad = Array.ones_like(self.data)
+
+        self.grad += grad
+        if self.op == 'sum':
+            assert len(parents) == 1
+            self.parents[0].backward(Array.ones_like(self.parents[0].data) * grad)
+        elif self.op == 'add':
+            assert len(self.parents) == 2
+            self.parents[0].backward(grad)
+            self.parents[1].backward(grad)
+        elif self.op == 'mul':
+            assert len(self.parents) == 2
+            self.parents[0].backward(grad * self.parents[1].data)
+            self.parents[1].backward(grad * self.parents[0].data)
+        elif self.op == 'relu':
+            assert len(self.parents) == 1
+            # self.parents[0].backward(grad * (self.data > 0))
+            raise NotImplemented('backward not implemented')
+        elif self.op == 'mean':
+            assert len(self.parents) == 1
+            raise NotImplemented('backward not implemented')
+            # self.parents[0].backward(grad *(1/self.data.size))
+        elif self.op == 'logsoftmax':
+            assert len(self.parents) == 1
+            raise NotImplemented('backward not implemented')
+            softmax_output = Array.exp(self.data)
+            grad_out = grad - softmax_output * Array.sum(grad, axis=1).reshape([-1,1])
+            self.parents[0].backward(grad_out)
 
 
 
+def add(a, b):
+    c = Tensor(a.data + b.data)
+    c.parents = [a, b]
+    c.op = 'add'
+    return c
 
-class FeedForwardNet:
-    def __init__(self):
-        self.w1 = Array.randn([784, 128])
-        self.w2 = Array.randn([128,10])
+def mul(a, b):
+    c = Tensor(a.data * b.data)
+    c.parents = [a, b]
+    c.op = 'mul'
+    return c
 
-    def forward(self, x):
-        x1 = Array.matmul(x, self.w1)
-        x2 = Array.maximum(x1, 0)
-        return Array.matmul(x2, self.w2)
-        
-x = Array.randn([4,784]) 
-net = FeedForwardNet()
-y = net.forward(x)
-print(list(y.shape))
+
+
+t1 = Tensor.randn([4,3])
+t2 = Tensor.randn([4,3])
+t3 = mul(t1, t2)
+t4 = Tensor.randn([4,3])
+t5 = add(t3, t4)
+t5.backward()
+print(t1.grad)
+print(t2.grad)
+print(t4.grad)

@@ -10,6 +10,14 @@ int get_flat_index(int* indices, int* strides, int ndim) {
     return flat_index;
 }
 
+void check_bool(float* a, float* result, size_t totalsize, float value, char op) {
+    for (size_t i = 0; i < totalsize; i++) {
+        if (op == '<') result[i] = (a[i] < value) ? 1.0f : 0.0f;
+        if (op == '=') result[i] = (a[i] == value) ? 1.0f : 0.0f;
+        if (op == '>') result[i] = (a[i] > value) ? 1.0f : 0.0f;
+    } 
+}
+
 int op_broadcasted(
         char op,
         float* a,
@@ -117,29 +125,27 @@ void sum(float *a, float* result, size_t n) {
 }
 
 void sum_reduce(float* a, int* shape, int* strides, int ndim, float* result, int* shape_result, int* strides_result, int dim) {
-    int* indices = calloc(ndim - 1, sizeof(int));
-    int* indices_a = calloc(ndim, sizeof(int));
+    int* indices = calloc(ndim, sizeof(int));
     int result_size = 1;
-    for (int i = 0; i < ndim - 1; i++) {
+    for (int i = 0; i < ndim; i++) {
         result_size *= shape_result[i];
     }
+
     for (int i = 0; i < result_size; i++) {
         float value = 0.0f;
+        int x = indices[dim];
         for (int j = 0; j < shape[dim]; j++) {
-            for (int k = 0; k < dim; k++) {
-                indices_a[k] = indices[k];
-            }
-            indices_a[dim] = indices[dim];
-            for(int k = dim + 1; k < ndim; k++) {
-                indices_a[k] = indices[k-1];
-            }
-            int pos_a = get_flat_index(indices_a, strides, ndim);
+            indices[dim] = j;
+            int pos_a = get_flat_index(indices, strides, ndim);
             value += a[pos_a];
         }
-        int pos_result = get_flat_index(indices, strides_result, ndim-1);
+        indices[dim] = x;
+        int pos_result = get_flat_index(indices, strides_result, ndim);
         result[pos_result] = value;
-        // increment indices
-        for (int j = ndim - 2; j >= 0; j--) {
+
+        // Increment indices
+        for (int j = ndim - 1; j >= 0; j--) {
+            if (j == dim) continue;  // Skip the reduction dimension
             indices[j]++;
             if (indices[j] < shape_result[j]) {
                 break;
@@ -147,37 +153,35 @@ void sum_reduce(float* a, int* shape, int* strides, int ndim, float* result, int
             indices[j] = 0;
         }
     }
+
     free(indices);
-    free(indices_a);
 }
 
 
-void max_reduce(char op, float* a, int* shape, int* strides, int ndim, float* result, int* shape_result, int* strides_result, int dim) {
-    int* indices = calloc(ndim - 1, sizeof(int));
-    int* indices_a = calloc(ndim, sizeof(int));
+void max_reduce(float* a, int* shape, int* strides, int ndim, float* result, int* shape_result, int* strides_result, int dim) {
+    int* indices = calloc(ndim, sizeof(int));
     int result_size = 1;
-    for (int i = 0; i < ndim - 1; i++) {
+    for (int i = 0; i < ndim; i++) {
         result_size *= shape_result[i];
     }
+
     for (int i = 0; i < result_size; i++) {
         float value = -INFINITY;
+        int x = indices[dim];
         for (int j = 0; j < shape[dim]; j++) {
-            for (int k = 0; k < dim; k++) {
-                indices_a[k] = indices[k];
-            }
-            indices_a[dim] = indices[dim];
-            for(int k = dim + 1; k < ndim; k++) {
-                indices_a[k] = indices[k-1];
-            }
-            int pos_a = get_flat_index(indices_a, strides, ndim);
+            indices[dim] = j;
+            int pos_a = get_flat_index(indices, strides, ndim);
             if (a[pos_a] > value) {
                 value = a[pos_a];
             }
         }
-        int pos_result = get_flat_index(indices, strides_result, ndim-1);
+        indices[dim] = x;
+        int pos_result = get_flat_index(indices, strides_result, ndim);
         result[pos_result] = value;
-        // increment indices
-        for (int j = ndim - 2; j >= 0; j--) {
+
+        // Increment indices
+        for (int j = ndim - 1; j >= 0; j--) {
+            if (j == dim) continue;  // Skip the reduction dimension
             indices[j]++;
             if (indices[j] < shape_result[j]) {
                 break;
@@ -185,11 +189,39 @@ void max_reduce(char op, float* a, int* shape, int* strides, int ndim, float* re
             indices[j] = 0;
         }
     }
+
     free(indices);
-    free(indices_a);
 }
 
+void transpose(float* a, int* shape, int* strides, int ndim, size_t totalsize, float* result, int* shape_result, int* strides_result) {
+    int* indices = (int*) calloc(ndim, sizeof(int));
+    
+    for (size_t i = 0; i < totalsize; i++) {
+        int old_pos = get_flat_index(indices, strides, ndim);
+        int* new_indices = (int*) calloc(ndim, sizeof(int));
+        
+        // Calculate new index based on reversed dimensions
+        for (int j = ndim-1; j >= 0; j--) {
+            new_indices[ndim-1-j] = indices[j];
+        }
 
+        int result_pos = get_flat_index(new_indices, strides_result, ndim);
+        
+        result[result_pos] = a[old_pos];
+        free(new_indices);
+        
+        // Increment indices
+        for (int j = ndim - 1; j >= 0; j--) {
+            indices[j]++;
+            if (indices[j] < shape[j]) {
+                break;
+            }
+            indices[j] = 0;
+        }
+    }
+    
+    free(indices);
+}
 
 void expfloat(float *a, float *result, size_t n) {
     for (size_t i = 0; i < n; i++) {

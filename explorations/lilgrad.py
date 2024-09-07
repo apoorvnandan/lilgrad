@@ -4,6 +4,7 @@ import random
 import math
 
 lib = ctypes.CDLL('./ops.so')
+
 lib.op_broadcasted.argtypes = [
         ctypes.c_char,
         ctypes.POINTER(ctypes.c_float),
@@ -20,6 +21,18 @@ lib.op_broadcasted.argtypes = [
         ctypes.c_int,
 ]
 lib.op_broadcasted.restype = ctypes.c_int
+
+lib.transpose.argtypes = [
+        ctypes.POINTER(ctypes.c_float),
+        ctypes.POINTER(ctypes.c_int), 
+        ctypes.POINTER(ctypes.c_int), 
+        ctypes.c_int,
+        ctypes.c_size_t,
+        ctypes.POINTER(ctypes.c_float),
+        ctypes.POINTER(ctypes.c_int), 
+        ctypes.POINTER(ctypes.c_int), 
+]
+lib.transpose.restype = None
 
 lib.matmul.argtypes = [
         ctypes.POINTER(ctypes.c_float),
@@ -38,11 +51,20 @@ lib.matmul.argtypes = [
 lib.matmul.restype = ctypes.c_int
 
 
-lib.logfloat.argtypes = [ctypes.POINTER(ctypes.c_float), ctypes.c_size_t]
+lib.logfloat.argtypes = [ctypes.POINTER(ctypes.c_float), ctypes.POINTER(ctypes.c_float), ctypes.c_size_t]
 lib.logfloat.restype = None
 
-lib.expfloat.argtypes = [ctypes.POINTER(ctypes.c_float), ctypes.c_size_t]
+lib.expfloat.argtypes = [ctypes.POINTER(ctypes.c_float), ctypes.POINTER(ctypes.c_float), ctypes.c_size_t]
 lib.expfloat.restype = None
+
+lib.check_bool.argtypes = [
+        ctypes.POINTER(ctypes.c_float),
+        ctypes.POINTER(ctypes.c_float),
+        ctypes.c_size_t,
+        ctypes.c_float,
+        ctypes.c_char
+]
+lib.check_bool.restype = None
 
 lib.mean.argtypes = [
         ctypes.POINTER(ctypes.c_float),
@@ -100,18 +122,42 @@ lib.ones.restype = None
 def create_c_compat_array(data, dtype='float'):
     if isinstance(data, list):
         if dtype == 'float':
-            return (ctypes.c_float * len(data))(*data)
+            if len(data) > 1:
+                return (ctypes.c_float * len(data))(*data)
+            return ctypes.pointer(ctypes.c_float(data[0]))
         elif dtype == 'int':
-            return (ctypes.c_int * len(data))(*data)
+            if len(data) > 1:
+                return (ctypes.c_int * len(data))(*data)
+            return ctypes.pointer(ctypes.c_int(data[0]))
     else: # todo - add check for ctype array
         return data
 
 def create_strides_from_shape(shape, itemsize=1):
     " shape is expected to be a list here "
-    strides = [itemsize]
-    for s in shape[1:][::-1]:
-        strides.append(strides[-1] * s)
-    return list(reversed(strides))
+    try: 
+        if isinstance(shape, ctypes.Array):
+            shape_list = list(shape)
+        if isinstance(shape, ctypes._Pointer):
+            shape_list = [shape.contents.value]
+        if isinstance(shape, list):
+            shape_list = shape
+        strides = [itemsize]
+        for s in reversed(shape_list[1:]):
+            strides.append(strides[-1] * s)
+        return list(reversed(strides))
+    except:
+        print(shape, type(shape))
+        assert False
+
+def lenc(x):
+    if isinstance(x, ctypes.Array):
+        return len(x)
+    if isinstance(x, ctypes._Pointer):
+        return 1
+    if isinstance(x, list):
+        return len(x)
+    print(type(x))
+    raise NotImplemented
 
 def calculate_matmul_shape(shape_a_ctype, shape_b_ctype):
     shape_a = list(shape_a_ctype)
@@ -153,8 +199,8 @@ class Array:
         self.data = create_c_compat_array(data, dtype)
         self.shape = create_c_compat_array(shape, 'int')
         self.strides = create_c_compat_array(create_strides_from_shape(shape), 'int')
-        self.ndim = len(shape)
-        self.size = len(data)
+        self.ndim = lenc(shape)
+        self.size = lenc(data)
         self.device = 'cpu'
 
     @staticmethod
@@ -181,6 +227,8 @@ class Array:
         return Array(d, shape)
 
     def elementwise_op(self, other, op):
+        if isinstance(other, (int, float)):
+            other = Array(ctypes.pointer(ctypes.c_float(other)), [1])
         ndim_result = max(self.ndim, other.ndim)
         shape_result = []
         for dim in range(ndim_result):
@@ -215,6 +263,28 @@ class Array:
 
     def __mul__(self, other): return self.elementwise_op(other, b'*')
 
+    def check_bool(self, other, op):
+        if isinstance(other, (int, float)):
+            d = (ctypes.c_float * self.size)()
+            lib.check_bool(self.data, d, self.size, other, op)
+            return Array(d, self.shape)
+        raise NotImplemented
+
+    def __lt__(self, other): return self.check_bool(other, b'<')
+
+    def __gt__(self, other): return self.check_bool(other, b'>')
+
+    def __eq__(self, other): return self.check_bool(other, b'=')
+ 
+    def transpose(self):
+        d = (ctypes.c_float * self.size)()
+        new_shape_list = list(reversed(list(self.shape)))
+        new_shape = create_c_compat_array(new_shape_list, 'int')
+        new_strides_list = create_strides_from_shape(new_shape_list)
+        new_strides = create_c_compat_array(new_strides_list, 'int')
+        lib.transpose(self.data, self.shape, self.strides, self.ndim, self.size, d, new_shape, new_strides)
+        return Array(d, list(reversed(self.shape)))
+
     @staticmethod
     def matmul(a, b):
         shape_result = calculate_matmul_shape(a.shape, b.shape) 
@@ -234,7 +304,10 @@ class Array:
             assert False
         return Array(d, shape)
 
-    def __str__(self): return str(list(self.data))
+    def __str__(self): 
+        if isinstance(self.data, ctypes._Pointer):
+            return str(self.data.contents.value)
+        return str(list(self.data))
 
     def list(self): return list(self.data)
     
@@ -251,11 +324,14 @@ class Array:
     @staticmethod
     def sum(x, axis=None):
         if axis is None:
-            d = (ctypes.c_float)()
+            d = ctypes.pointer(ctypes.c_float(0))
             lib.sum(x.data, d, self.size)
             return Array(d, [1])
-        d = (ctypes.c_float * (x.size - x.shape[axis]))()
-        shape_result = [x.shape[i] for i in range(x.ndim) if i != axis]
+        shape_result = [x.shape[i] if i != axis else 1 for i in range(x.ndim)]
+        size_result = 1
+        for s in shape_result:
+            size_result *= s
+        d = (ctypes.c_float * size_result)()
         strides_result = create_strides_from_shape(shape_result)
         shape = create_c_compat_array(shape_result, 'int')
         strides = create_c_compat_array(strides_result, 'int')
@@ -267,14 +343,17 @@ class Array:
     
     @staticmethod
     def mean(x):
-        d = (ctypes.c_float)()
-        lib.mean(x.data, d, self.size)
+        d = ctypes.pointer(ctypes.c_float(0))
+        lib.mean(x.data, d, x.size)
         return Array(d, [1])
 
     @staticmethod
     def max(x, axis):
-        d = (ctypes.c_float * (x.size - x.shape[axis]))()
-        shape_result = [x.shape[i] for i in range(x.ndim) if i != axis]
+        shape_result = [x.shape[i] if i != axis else 1 for i in range(x.ndim)]
+        size_result = 1
+        for s in shape_result:
+            size_result *= s
+        d = (ctypes.c_float * size_result)()
         strides_result = create_strides_from_shape(shape_result)
         shape = create_c_compat_array(shape_result, 'int')
         strides = create_c_compat_array(strides_result, 'int')
@@ -284,6 +363,7 @@ class Array:
         )
         return Array(d, shape)
 
+    @staticmethod
     def maximum(x, value):
         d = (ctypes.c_float * x.size)()
         lib.maximum(x.data, d, value, x.size)
@@ -291,27 +371,14 @@ class Array:
 
     def reshape(self, new_shape):
         if -1 in new_shape:
-            remaining = 0
+            remaining = 1
             for s in new_shape:
                 if s != -1:
-                    remaining += s
+                    remaining *= s
             for i in range(len(new_shape)):
                 if new_shape[i] == -1:
-                    new_shape[i] = self.size - remaining
-        shape = create_c_compat_array(new_shape, 'int')
-        strides = create_strides_from_shape(new_shape)
-        self.shape = shape
-        self.strides = strides
-        self.ndim = len(new_shape)
-
-
-def logsoftmax(a):
-    max_vals = Array.max(a, axis=1)
-    x = a - max_vals
-    exp_a = x.exp()
-    sum_exp_a = Array.sum(exp_a, axis=1)
-    c = a - max_vals - sum_exp_a.log()
-    return c 
+                    new_shape[i] = int(self.size/remaining)
+        return Array(self.data, new_shape)
 
 
 class Tensor:
@@ -327,10 +394,11 @@ class Tensor:
         data = Array.randn(shape)
         return Tensor(data)
 
+    def reshape(self, new_shape): return Tensor(self.data.reshape(new_shape))
+
     def backward(self, grad=None):
         if grad is None:
             grad = Array.ones_like(self.data)
-
         self.grad += grad
         if self.op == 'sum':
             assert len(parents) == 1
@@ -345,19 +413,25 @@ class Tensor:
             self.parents[1].backward(grad * self.parents[0].data)
         elif self.op == 'relu':
             assert len(self.parents) == 1
-            # self.parents[0].backward(grad * (self.data > 0))
-            raise NotImplemented('backward not implemented')
+            mask = (self.data > 0)
+            self.parents[0].backward(grad * mask)
         elif self.op == 'mean':
             assert len(self.parents) == 1
-            raise NotImplemented('backward not implemented')
-            # self.parents[0].backward(grad *(1/self.data.size))
+            k = 1.0 / self.parents[0].data.size
+            self.parents[0].backward(grad * k)
         elif self.op == 'logsoftmax':
             assert len(self.parents) == 1
-            raise NotImplemented('backward not implemented')
-            softmax_output = Array.exp(self.data)
-            grad_out = grad - softmax_output * Array.sum(grad, axis=1).reshape([-1,1])
+            softmax_output = self.data.exp()
+            x = Array.sum(grad, axis=1)
+            x1 = x.reshape([-1,1])
+            grad_out = grad - softmax_output * x1
             self.parents[0].backward(grad_out)
-
+        elif self.op == 'matmul':
+            assert len(self.parents) == 2
+            t0 = self.parents[0].data.transpose()
+            t1 = self.parents[1].data.transpose()
+            self.parents[0].backward(Array.matmul(grad, t1))
+            self.parents[1].backward(Array.matmul(t0, grad))
 
 
 def add(a, b):
@@ -372,14 +446,33 @@ def mul(a, b):
     c.op = 'mul'
     return c
 
+def relu(a):
+    b = Tensor(Array.maximum(a.data, 0))
+    b.op = 'relu'
+    b.parents = [a]
+    return b
+
+def mean(a):
+    c = Tensor(Array.mean(a.data))
+    c.parents = [a]
+    c.op = 'mean'
+    return c
+
+def logsoftmax(a):
+    max_vals = Array.max(a.data, axis=1)
+    diff = (a.data - max_vals)
+    exp_a = diff.exp()
+    sum_exp_a = Array.sum(exp_a, axis=1)
+    z = sum_exp_a.log()
+    c = Tensor(diff - z)
+    c.parents = [a]
+    c.op = 'logsoftmax'
+    return c 
+
+def matmul(a, b):
+    c = Tensor(Array.matmul(a.data, b.data))
+    c.parents = [a,b]
+    c.op = 'matmul'
+    return c
 
 
-t1 = Tensor.randn([4,3])
-t2 = Tensor.randn([4,3])
-t3 = mul(t1, t2)
-t4 = Tensor.randn([4,3])
-t5 = add(t3, t4)
-t5.backward()
-print(t1.grad)
-print(t2.grad)
-print(t4.grad)

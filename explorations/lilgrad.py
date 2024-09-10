@@ -322,10 +322,21 @@ class Array:
         return Array(d, self.shape)
 
     @staticmethod
+    def abs(x):
+        """
+        doing this in python for testing
+        will move to c later for speed
+        """
+        d = (ctypes.c_float * x.size)()
+        for i in range(x.size):
+            d[i] = abs(x.data[i])
+        return Array(d, x.shape)
+
+    @staticmethod
     def sum(x, axis=None):
         if axis is None:
             d = ctypes.pointer(ctypes.c_float(0))
-            lib.sum(x.data, d, self.size)
+            lib.sum(x.data, d, x.size)
             return Array(d, [1])
         shape_result = [x.shape[i] if i != axis else 1 for i in range(x.ndim)]
         size_result = 1
@@ -417,7 +428,7 @@ class Tensor:
             self.parents[0].backward(grad * mask)
         elif self.op == 'mean':
             assert len(self.parents) == 1
-            k = 1.0 / self.parents[0].data.size
+            k = 1.0 / self.data.size
             self.parents[0].backward(grad * k)
         elif self.op == 'logsoftmax':
             assert len(self.parents) == 1

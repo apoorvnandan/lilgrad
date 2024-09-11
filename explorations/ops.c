@@ -53,9 +53,9 @@ int op_broadcasted(
         size_result *= shape_result[i];
     }
     int* indices = (int*) calloc(ndim_result, sizeof(int));
+    int* indices_a = (int*) calloc(ndim_a, sizeof(int));
+    int* indices_b = (int*) calloc(ndim_b, sizeof(int));
     for (int i = 0; i < size_result; i++) {
-        int* indices_a = (int*) calloc(ndim_a, sizeof(int));
-        int* indices_b = (int*) calloc(ndim_b, sizeof(int));
         for (int d = ndim_result - 1; d >= 0; d--) {
             int dim_from_right = ndim_result - 1 - d;
             if (dim_from_right < ndim_a) {
@@ -90,9 +90,9 @@ int op_broadcasted(
             }
             indices[j] = 0;
         }
-        free(indices_a);
-        free(indices_b);
     }
+    free(indices_a);
+    free(indices_b);
     free(indices);
     return 0;
 }
@@ -195,10 +195,9 @@ void max_reduce(float* a, int* shape, int* strides, int ndim, float* result, int
 
 void transpose(float* a, int* shape, int* strides, int ndim, size_t totalsize, float* result, int* shape_result, int* strides_result) {
     int* indices = (int*) calloc(ndim, sizeof(int));
-    
+    int* new_indices = (int*) calloc(ndim, sizeof(int));
     for (size_t i = 0; i < totalsize; i++) {
         int old_pos = get_flat_index(indices, strides, ndim);
-        int* new_indices = (int*) calloc(ndim, sizeof(int));
         
         // Calculate new index based on reversed dimensions
         for (int j = ndim-1; j >= 0; j--) {
@@ -208,7 +207,6 @@ void transpose(float* a, int* shape, int* strides, int ndim, size_t totalsize, f
         int result_pos = get_flat_index(new_indices, strides_result, ndim);
         
         result[result_pos] = a[old_pos];
-        free(new_indices);
         
         // Increment indices
         for (int j = ndim - 1; j >= 0; j--) {
@@ -219,7 +217,7 @@ void transpose(float* a, int* shape, int* strides, int ndim, size_t totalsize, f
             indices[j] = 0;
         }
     }
-    
+    free(new_indices);
     free(indices);
 }
 
@@ -280,8 +278,30 @@ int matmul(
             }
         }
     } 
+    // handle common cases with optimised code
+    if (ndim_a == 2 && ndim_b == 2) {
+        // (P,Q) x (Q,R)
+        int P = shape_a[0]; 
+        int Q = shape_a[1];
+        int R = shape_b[1];
+        for (int i = 0; i < P; i++) {
+            for (int j = 0; j < R; j++) {
+                float val = 0.0f;
+                for (int k = 0; k < Q; k++) {
+                    int pos_a = i * strides_a[0] + k * strides_a[1];
+                    int pos_b = k * strides_b[0] + j * strides_b[1];
+                    val += a[pos_a] * b[pos_b];
+                }
+                int pos_result = i * strides_result[0] + j * strides_result[1];
+                result[pos_result] = val;
+            }
+        }
+        return 0;
+    } 
     // calculating the result values
-    int* indices = calloc(ndim_result, sizeof(int));
+    int* indices_a = (int*) calloc(ndim_a, sizeof(int));
+    int* indices_b = (int*) calloc(ndim_b, sizeof(int));
+    int* indices = (int *) calloc(ndim_result, sizeof(int));
     int totalsize = 1;
     for (int i = 0; i < ndim_result; i++) {
         totalsize *= shape_result[i];
@@ -289,8 +309,6 @@ int matmul(
     for (int i = 0; i < totalsize; i++) {
         float value = 0.0f;
         for (int j = 0; j < shape_a[ndim_a - 1]; j++) {
-            int* indices_a = (int*) calloc(ndim_a, sizeof(int));
-            int* indices_b = (int*) calloc(ndim_b, sizeof(int));
             indices_a[ndim_a - 1] = j;
             if (ndim_b == 1) {indices_b[0] = j;}
             else {indices_b[ndim_b - 2] = j;}
@@ -324,8 +342,6 @@ int matmul(
             int pos_a = get_flat_index(indices_a, strides_a, ndim_a);
             int pos_b = get_flat_index(indices_b, strides_b, ndim_b);
             value += a[pos_a] * b[pos_b];
-            free(indices_a);
-            free(indices_b);
         }
         int pos_result = get_flat_index(indices, strides_result, ndim_result);
         result[pos_result] = value;
@@ -338,5 +354,8 @@ int matmul(
             indices[j] = 0;
         }
     }
+    free(indices_a);
+    free(indices_b);
+    free(indices);
     return 0;
 }

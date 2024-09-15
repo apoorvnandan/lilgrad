@@ -43,7 +43,6 @@ def test():
     
 
 for i in range(1000):
-    stime = time()
     samp = np.random.randint(0, x_train.shape[0], size=(BS))
     batch = x_train[samp].reshape(-1,28*28)
     y_samp = y_train[samp]
@@ -54,18 +53,17 @@ for i in range(1000):
     y[range(y.shape[0]), y_samp] = -1.0
     y_arr = Array(list(y.flatten()), list(y.shape))
     y = Tensor(y_arr)
+    stime = time()
     out = model.forward(x)
     out_mul_y = mul(out, y)
     loss = mean(out_mul_y)
     loss.backward()
-
-    if i % 100 == 0:
-        print('batch', i, 'loss', loss.data)
-
+    batch_time = time() - stime
     model.w1.data = model.w1.data - model.w1.grad * lr
     model.w2.data = model.w2.data - model.w2.grad * lr
-
     model.w1.grad = Array.zeros_like(model.w1.grad)
     model.w2.grad = Array.zeros_like(model.w2.grad)
+    if i % 100 == 0:
+        print('batch', i, 'loss', loss.data, 'batch time', batch_time)
 
 test()

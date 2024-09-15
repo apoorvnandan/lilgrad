@@ -2,6 +2,29 @@ import ctypes
 from time import time
 import random
 import math
+import os
+
+def load_cuda_lib():
+    cudalib.cpu_to_cuda.argtypes = [ctypes.POINTER(ctypes.POINTER(ctypes.c_float)), ctypes.c_int]
+    cudalib.cpu_to_cuda.restype = None
+
+    cudalib.cuda_to_cpu.argtypes = [ctypes.POINTER(ctypes.POINTER(ctypes.c_float)), ctypes.c_int]
+    cudalib.cuda_to_cpu.restype = None
+
+    cudalib = ctypes.CDLL('./cudaops.so')
+    cudalib.matmul.argtypes = [
+        ctypes.POINTER(ctypes.c_float),
+        ctypes.POINTER(ctypes.c_int),
+        ctypes.POINTER(ctypes.c_float),
+        ctypes.POINTER(ctypes.c_int),
+        ctypes.POINTER(ctypes.c_float),
+    ]
+    cudalib.matmul.restype = None
+    return cudalib
+
+cudalib = None
+if os.path.exists('./cudaops.so'):
+    cudalib = load_cuda_lib()
 
 lib = ctypes.CDLL('./ops.so')
 
@@ -104,7 +127,6 @@ lib.max_reduce.argtypes = [
 ]
 lib.max_reduce.restype = None
 
-
 lib.maximum.argtypes = [
         ctypes.POINTER(ctypes.c_float),
         ctypes.POINTER(ctypes.c_float),
@@ -203,6 +225,26 @@ class Array:
         self.size = lenc(data)
         self.device = 'cpu'
 
+    def cuda(self):
+        if not cudalib:
+            raise ValueError('cuda not available')
+        if self.device != 'cpu':
+            return
+        a_ptr = ctypes.cast(self.data, ctypes.POINTER(ctypes.c_float))
+        a_ptr_ptr = ctypes.pointer(a_ptr)
+        cudalib.cpu_to_cuda(a_ptr_ptr, self.size)
+        self.device = 'cuda'
+
+    def cpu(self):
+        if not cudalib:
+            raise ValueError('cuda not available')
+        if self.device != 'cuda':
+            return
+        a_ptr = ctypes.cast(self.data, ctypes.POINTER(ctypes.c_float))
+        a_ptr_ptr = ctypes.pointer(a_ptr)
+        cudalib.cuda_to_cpu(a_ptr_ptr, self.size)
+        self.device = 'cpu'
+
     @staticmethod
     def zeros_like(x):
         return Array([0] * x.size, x.shape)
@@ -295,6 +337,15 @@ class Array:
         for s in shape_result:
             size_result *= s
         d = (ctypes.c_float * size_result)()
+        d_ptr = ctypes.cast(c_ctype, ctypes.POINTER(ctypes.c_float))
+        d_ptr_ptr = ctypes.pointer(d_ptr)
+        cudalib.cpu_to_cuda(d_ptr_ptr, size_result)
+        if a.device == 'cuda' and b.device == 'cuda':
+            if a.ndim != 2 and b.ndim != 2:
+                raise ValueError(f'cuda matmul not supported for shapes {list(a.shape)} and {list(b.shape)}')
+            cudalib.matmul(a, a.shape, b, b.shape, d)  
+            return Array(d, shape)
+         
         err = lib.matmul(
                 a.data, a.shape, a.strides, a.ndim,
                 b.data, b.shape, b.strides, b.ndim,
@@ -400,6 +451,10 @@ class Tensor:
         self.op = ''
         self.name = name
 
+    def cuda(self): self.data.cuda()
+    
+    def cpu(self): self.data.cpu()
+
     @staticmethod
     def randn(shape):
         data = Array.randn(shape)
@@ -412,7 +467,7 @@ class Tensor:
             grad = Array.ones_like(self.data)
         self.grad += grad
         if self.op == 'sum':
-            assert len(parents) == 1
+            assert len(self.parents) == 1
             self.parents[0].backward(Array.ones_like(self.parents[0].data) * grad)
         elif self.op == 'add':
             assert len(self.parents) == 2

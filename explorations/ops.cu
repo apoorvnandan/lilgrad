@@ -37,4 +37,37 @@ extern "C" {
         }
         cudaDeviceSynchronize();
     }
+
+    __global__ void matmul_kernel(
+            float* a, int* shape_a,
+            float* b, int* shape_b,
+            float* result,
+    ) {
+        const uint x = blockIdx.x * blockDim.x + threadIdx.x;
+        const uint y = blockIdx.y * blockDim.y + threadIdx.y;
+
+        if (x < shape_a[0] && y < shape_b[1]) {
+            float tmp = 0.0f;
+            for (int i = 0; i < shape_a[1]; i++) {
+                tmp += a[x * shape_a[1] + y] * b[x * shape_b[1] + y];
+            }
+            result[x * shape_b[1] + y] = tmp;
+        }
+    }
+
+    __host__ void matmul(
+            float* a, int* shape_a, 
+            float* b, int* shape_b, 
+            float* result
+    ) {
+        int number_of_blocks = (size + THREADS_PER_BLOCK - 1) / THREADS_PER_BLOCK;
+        matmul_kernel<<<number_of_blocks, THREADS_PER_BLOCK>>>(a, shape_a, b, shape_b, result);
+
+        cudaError_t error = cudaGetLastError();
+        if (error != cudaSuccess) {
+            printf("CUDA error: %s\n", cudaGetErrorString(error));
+            exit(-1);
+        }
+        cudaDeviceSynchronize(); 
+    }
 }

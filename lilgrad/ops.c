@@ -30,6 +30,8 @@ void conv2d_backward(Arr* dinp, Arr* dkernel, Arr* dout, Arr* inp, Arr* kernel);
 void maxpool2d_backward(Arr* dinp, Arr* dout, Arr* inp, int kernel_size, int stride);
 void view(Arr* a, int* out_shape, int out_ndim);
 void view_backward(Arr* da, int* in_shape, int in_ndim);
+void update_grad(Arr* a, Arr* da, float lr);
+void set_zero(Arr* a);
 
 void matmul(Arr* c, Arr* a, Arr* b) {
     // (P,Q) x (Q,R) = (P,R)
@@ -451,4 +453,16 @@ void view(Arr* a, int* out_shape, int out_ndim) {
 
 void view_backward(Arr* da, int* in_shape, int in_ndim) {
     view(da, in_shape, in_ndim);
+}
+
+void update_grad(Arr* a, Arr* da, float lr) {
+    for (int i = 0; i < a->size; i++) {
+        a->data[i] = a->data[i] - lr * da->data[i];
+    }
+}
+
+void set_zero(Arr* a) {
+    for (int i = 0; i < a->size; a++) {
+        a->data[i] = 0.0f;
+    }
 }

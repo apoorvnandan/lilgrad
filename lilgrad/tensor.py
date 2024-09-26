@@ -1,7 +1,7 @@
 import ctypes
 import numpy as np  # only to support creating tensors from numpy arrays
 from ctypes import POINTER, c_float, c_int
-arr_lib = ctypes.CDLL('./ops.so')
+arr_lib = ctypes.CDLL('./lilgrad/ops.so')
 
 class Arr(ctypes.Structure):
     _fields_ = [
@@ -67,6 +67,14 @@ arr_lib.view.restype = None
 arr_lib.view_backward.argtypes = [POINTER(Arr), POINTER(c_int), c_int]
 arr_lib.view_backward.restype = None
 
+# update weights
+arr_lib.update_grad.argtypes = [POINTER(Arr), POINTER(Arr), c_float]
+arr_lib.update_grad.restype = None
+
+# set to zero
+arr_lib.set_zero.argtypes = [POINTER(Arr)]
+arr_lib.set_zero.restype = None
+
 
 class Tensor:
     def __init__(self, data):
@@ -84,9 +92,14 @@ class Tensor:
                 stride = self.data.contents.strides[i]
                 pos += stride * key[i]
             return self.data.contents.data[pos]
-        return self.data.contents[key]  
+        return self.data.contents.data[key]
+    
+    def zero_grad(self):
+        arr_lib.set_zero(self.grad)
 
     def convert_np(self, data):
+        if isinstance(data, POINTER(Arr)):
+            return data
         shape = (c_int * data.ndim)(*list(data.shape))
         ndim = len(shape)
         new_arr = arr_lib.create_arr(shape, ndim)
@@ -95,9 +108,12 @@ class Tensor:
             new_arr.contents.data[i] = data[i]
         return new_arr
 
+    def update_grad(self, lr):
+        arr_lib.update_grad(self.data, self.grad, lr)
+
     def backward(self):
         if self.op == 'relu':
-            arr_lib.relu_backward(self.parents[0].grad, self.grad)
+            arr_lib.relu_backward(self.parents[0].grad, self.grad, self.parents[0].data)
             self.parents[0].backward()
         elif self.op == 'matmul':
             arr_lib.matmul_backward(
@@ -107,14 +123,40 @@ class Tensor:
                 self.parents[0].data, 
                 self.parents[1].data
             )
-            self.parents[0].backward(grad_preset=True)
-            self.parents[1].backward(grad_preset=True)
+            self.parents[0].backward()
+            self.parents[1].backward()
         elif self.op == 'nll_loss':
-            arr_lib.nll_loss_backward(self.parents[0].grad, self.parents[1])
+            arr_lib.nll_loss_backward(self.parents[0].grad, self.parents[1].data)
             self.parents[0].backward()
         elif self.op == 'logsoftmax':
             arr_lib.logsoftmax_backward(self.parents[0].grad, self.grad, self.data)
             self.parents[0].backward()
+
+def matmul(c, a, b):
+    arr_lib.matmul(c.data, a.data, b.data)
+    c.op = 'matmul'
+    c.parents = [a,b]
+
+def relu(out, inp):
+    arr_lib.relu(out.data, inp.data)
+    out.op = 'relu'
+    out.parents = [inp]
+
+def logsoftmax(out, inp):
+    arr_lib.logsoftmax(out.data, inp.data)
+    out.op = 'logsoftmax'
+    out.parents = [inp]
+
+def nll_loss(loss, out, labels):
+    arr_lib.nll_loss(loss.data, out.data, labels.data)
+    loss.op = 'nll_loss'
+    loss.parents = [out, labels]
+
+def zeros(shape):
+    s = (c_int * len(shape))(*list(shape))
+    nd = len(shape)
+    d = arr_lib.create_arr(s, nd)
+    return Tensor(d)
         
 if __name__ == "__main__":
     data = np.arange(10).reshape(5,2)

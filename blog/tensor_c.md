@@ -28,6 +28,8 @@ There are other tasks, where it's pretty much impossible to come up with a set o
 
 Example: "The input image contains either a cat or a dog. Write a function to output `CAT` or `DOG` based on the image contents."
 
+<img width="268" alt="image" src="https://github.com/user-attachments/assets/18a1c0a0-5cbf-407d-8598-0cf4c0f58f06">
+
 Think about the code you can write for this. You'll quickly realise that there is no specific set of instructions you can code here, to create this function. You can, however, write a special kind of a function that can solve this task. Let's write one such special function. The code is in C, but the logic should be readable by anyone.
 
 ```c

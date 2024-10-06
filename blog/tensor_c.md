@@ -2,31 +2,35 @@
 
 Documenting my pov while building this. The objective is to help people understand neural networks from absolute scratch. No pytorch. No numpy. 
 
-Should be readable for anyone who knows programming (any language) even if you are not familiar with machine learning or neural networks at all. 
+Should be readable for anyone who knows programming **even if you are not familiar with machine learning or neural networks at all**. 
 
 Moreover, building this from scratch, and in C, does not mean that the code and the APIs will not be user friendly. In fact, we'll create the needed abstractions and show just how easy it is to code and train different neural network architectures with this tiny library.
 
 ## Contents:
 
-* What are neural networks anyhow?
+* What are neural networks?
 * Creating tensors
 * Defining a loss function
 * Optimising the loss - Autograd
-* Examples of training different neural networks
+* Implementing operations
+* Training neural networks
+* Examples
 
-## What are neural networks anyhow?
+## What are neural networks?
 
 Think about the process of coding a function. For some tasks, functions can be straightforward to code.
 
-Here's an example: "write a function to change this color image to grayscale".
+Here's an example: "Write a function to change a color image to grayscale."
 
-There is a clear set of instructions (for each pixel: val = 0.299R + 0.587G + 0.114B) that you can code in your favorite programming language and create a function that will solve this task. The function will be determinisitic, giving you the exact same grayscale image for the same color image.
+There is a clear set of instructions (`for each pixel: change RGB value to new_value = 0.299R + 0.587G + 0.114B`) that you can code in your favorite programming language and create a function that will solve this task. The function will be determinisitic, giving you exact predictable outputs for your input images.
 
-There are other tasks, where it's pretty much impossible to come up with a set of instructions needed to get the output from the input. And therefore, you cannot write the code needed for the function.
+There are other tasks, where it's pretty much impossible to come up with a set of instructions needed to get the output from the input. And therefore, you cannot write the code for them.
 
-Example: "The input image contains either a cat or a dog. Write a function to output `CAT` or `DOG` based on the image contents.".
+Example: "The input image contains either a cat or a dog. Write a function to output `CAT` or `DOG` based on the image contents."
 
-Think about the code you can write for this. You'll quickly realise that there is no specifi set of instructions you can code here, to create this function. You can, however, write a special kind of a function that can solve this task. Let's write one such special function. The code is in C, but the logic should be readable by anyone.
+<img width="268" alt="image" src="https://github.com/user-attachments/assets/18a1c0a0-5cbf-407d-8598-0cf4c0f58f06">
+
+Think about the code you can write for this. You'll quickly realise that there is no specific set of instructions you can code here, to create this function. You can, however, write a special kind of a function that can solve this task. Let's write one such special function. The code is in C, but the logic should be readable by anyone.
 
 ```c
 int cat_or_dog(float* input_img, float* w1, float* w2) {
@@ -46,6 +50,10 @@ Then, the function proceeds to do some weird mathematical operations on the imag
 * `matrix_multiplication` is self explanatory.
 * `relu` is a mathematical operation, equivalent of max(x, 0) on every number within the array.
 * `logsoftmax` is a another mathematical function, and I'll just write the formula below, because it's not important for the point I'm trying to make at the moment.
+
+$$
+\text{log-softmax}(x_i) = \log \left( \frac{e^{x_i}}{\sum_{j} e^{x_j}} \right)
+$$
 
 The weirdest thing though, is that this function, for very specific values of `w1` and `w2`, will actually give you the correct output for like 99% of images. If you're completely new to machine learning and neural networks, you might be surprised. Infact, I'll link the exact values of w1 and w2 along with the code, so you can test this on a bunch of cat and dog images of a certain size.
 
@@ -70,15 +78,35 @@ typedef struct {
 } Arr;
 ```
 
-This struct holds everything needed. All the values are inside the 1D values array. Shape should be obvious. Strides is something that's really useful for some operations, and I'll explain them later. 
+This struct holds everything needed. All the values are inside the 1D values array. Shape should be obvious. Strides are something that's really useful for some operations, and I'll explain them later. 
+
+The key thing to understand here, is that as long as you know all these properties about an N-D array, you can perform pretty much any operation on it.
 
 Here's an example:
 To do matrix multiplication between two 2D arrays with shapes (4,2) and (2,3), we can write the following code.
 
+```c
+void matmul(Arr* c, Arr* a, Arr* b) {
+    // (P,Q) x (Q,R) = (P,R)
+    int P = a->shape[0];
+    int Q = a->shape[1];
+    int R = b->shape[1];
+    for (int i = 0; i < P; i++) {
+        for (int j = 0; j < R; j++) {
+            float tmp = 0.0f;
+            for (int k = 0; k < Q; k++) {
+                int pos_a = i * a->strides[0] + k * a->strides[1];
+                int pos_b = k * b->strides[0] + j * b->strides[1];
+                tmp += a->values[pos_a] * b->values[pos_b];
+            }
+            int pos_c = i * c->strides[0] + j * c->strides[1];
+            c->values[pos_c] = tmp;
+        }
+    }
+}
 ```
-...
-...
-```
+
+Don't worry about this code, right now. We'll get to N-D array operations in the later sections.
 
 ## Defining a loss function
 
@@ -89,7 +117,251 @@ In order to do that, we define a different function, one that operates on the ou
 Here is an example:
 
 ```c
-nll_loss
+float loss_fn(Arr* logsoftmax_outputs, Arr* labels) {
+    // `outputs` is of shape (2) : 2 catgories to choose from
+    // `labels` is of shape (2) : [1,0] for cat and [0,1] for dog
+    float s = 0.0f;
+    for (int i = 0; i < logsoftmax_outputs->size; i++) {
+        s += a->data[i] * labels->data[i] * (-1);    
+    }
+    return s/a->size;
+}
 ```
 
-To understand what this function does, you should 
+To understand what this function does, think about the following:
+* The `logsoftmax_outputs` will range from `-infinity` to `0`. (See the `cat_or_dog` function above)
+* What happens when `w1` and `w2` are far from the correct/optimal values, and the neural network function gives you random `logsoftmax_outputs`, say `[-0.69, -0.69]`
+* Assume the label is `[0,1]` (i.e. `dog`), the loss value will be `0.34`.
+* What happens when `w1` and `w2` have optimal values, such that the neural network gives you `logsoftmax_outputs` as `[-2.3, -0.01]`.
+* Assuming the same labels (`[0,1]`), the loss value will be `0.005`.
+ 
+What this should tell you, is that the loss value is close to zero when `w1` and `w2` have good values, and the neural network function is accurate.
+
+The task of finding good values for the parameters `w1` and `w2` then becomes the task of finding `w1` and `w2` that produce low values from the loss function!
+
+## Optimising the loss - Autograd
+
+Remember differentials from your high school calculus? Well, the core concept is this:
+
+* We want an answer to the question: How much will the loss value change if we change the values of `w1` and `w2` by some small amount (think ~0.001).
+* To find this, we calculate the gradient of the loss value, w.r.t a parameter, say `w1` : $\frac{\partial L}{\partial w_1}$
+* To calculate gradients like this, we need a generic procedure. Something we can apply regardless of the operations present within the neural network.
+
+This procedure comes from chain rule.
+
+Lets write down the relationship between w1 and the loss value.
+
+$$
+\text{w1-out} = \mathbf{x} \cdot \mathbf{w}_1 
+$$
+
+$$
+\text{relu-out} = \max(\text{w1-out}, 0)
+$$
+
+$$
+\text{w2-out} = \text{relu-out} \cdot \mathbf{w}_2
+$$
+
+$$
+\text{logsofmax-out} = \text{logsoftmax}(\text{w2-out})
+$$
+
+$$
+\text{L} = \text{mean}(\text{logsoftmax-out} \odot \text{labels})
+$$
+
+To find $\frac{\partial L}{\partial w_1}$ we need to apply the chain rule at each operation.
+
+$$
+\frac{\partial L}{\partial w_1} = \frac{\partial L}{\partial \text{logsoftmax-out}} \frac{\partial \text{logsoftmax-out}}{\partial \text{w2-out}} \frac{\partial \text{w2-out}}{\partial \text{relu-out}} \frac{\partial \text{relu-out}}{\partial \text{w1-out}} \frac{\partial \text{w1-out}}{\partial w_1}
+$$
+
+Each of these can be easily calculated individually. Why? Well there's a nice little set of operations that all neural networks are composed of. And the gradients for these operations are well known and easy to implement. e.g. for the matrix multiplication operation 
+
+$$
+C = A \cdot B
+$$
+
+The gradients can be calculated as:
+
+$$
+\text{dA} = \text{dC} \cdot B^{T}
+$$
+
+$$
+\text{dB} = A^{T} \cdot \text{dC} 
+$$
+
+So to calculate the gradients of a parameter like `w1` w.r.t the loss, all we need to know of the set of operations from `w1` to the loss, as coded within the neural network.
+
+Clarity comes with implementation, so let's do this programatically.
+
+We will create a new struct:
+
+```c
+typedef union {
+    int ival;
+    float fval;
+} Arg;
+
+typedef struct Tensor {
+    Arr* data;
+    Arr* grad;
+    int op; // op used to create this tensor
+    struct Tensor* prevs[MAX_PREVS]; // tensors that were processed by the op
+    int num_prevs;
+    Arg args[MAX_ARGS]; // additional args for the op (e.g. axis, stride etc.)
+} Tensor;
+```
+
+This is a wrapper around our previous struct for N-D arrays. We have the array, and then we add everything we need to be able to compute the gradients.
+
+* `grad` stores the gradient - another N-D array of the same shape as the actual `data` within the tensor.
+* `op` stores the operation which was used to create this tensor, if there was one. e.g. if we declare two tensors `input` and `w1` and add them to get a new tensor `x`. `x` has the op `ADD`. This is optional, as some tensors are simply declared and not calculated from other tensors.
+* `prevs` is an array of pointers to other tensors that were processed by `op` e.g. `input` and `w1` are `prevs` for the tensor `x` in the example above.
+* `args` contains additional arguments used within the op. e.g. if you were to calculate the mean of a tensor along a specific axis, the axis would be an additional argument.
+
+The main point here, is that once you have all these attributes bundled together, it's really simple to implement the gradient calculations.
+
+Let me explain with some simple operations.
+
+```c
+Tensor* a, b; // intitialised to some values
+Tensor* mul_out = mul(a, b); // element wise multiplication
+Tensor* loss = mean(mul_out); // L
+```
+
+And this is what we are trying to compute.
+
+$$
+\frac{\partial \text{loss}}{\partial a} = \frac{\partial \text{loss}}{\partial \text{mul-out}} \frac{\partial \text{mul-out}}{\partial a}
+$$
+
+Lets do this step by step.
+
+Step 1: The gradient of `loss` tensor (that will be stored inside it's `grad` attribute) is simply `1` because if we change it's value by a small amount, say 0.001, the loss value will change by the exact same amount!! The gradient of `mul_out` tensor will be this part.
+ 
+$$
+\frac{\partial \text{loss}}{\partial a} = \underbrace{\frac{\partial \text{loss}}{\partial \text{mul-out}}}_{\text{this part}} \frac{\partial \text{mul-out}}{\partial a}
+$$
+
+At this step, we are looking at the `loss` tensor. The `op` here, is `MEAN` operation. The `prevs` contains just one tensor: `mul_out`. And `args` is empty. We will calculate the `grad` of the `prev` tensor(s) using this information. 
+
+> This procedure used to calculate the `grad` of the inputs of an operation using the `grad` of the output of the operation, is called the backward function of that operation.
+
+Let's say the inpuut to the mean operation is `inp` and the output is `out`.
+
+The gradient w.r.t each value within `inp` will be: $\frac{1}{N}$ where $N$ is the number of values within `inp`.
+
+So the backward function for the mean operation will be:
+
+```c
+void mean_backward(Tensor* out) {
+    for (int i = 0; i < out->prevs[0]->grad->size; i++) {
+        out->prevs[0]->grad->values[i] += out->grad->values[0] / out->prevs[0]->data->size;
+    }
+}
+```
+
+Step 2: The gradient of tensor `a` is this whole part
+
+$$
+\frac{\partial \text{loss}}{\partial a} = \underbrace{\frac{\partial \text{loss}}{\partial \text{mul-out}} \frac{\partial \text{mul-out}}{\partial a}}_{\text{this whole part}}
+$$
+
+The first part of this is something we have already computed using the backward function of `mean` operation.
+The second part can be computed using the backward function of `MUL` operation.
+
+```c
+void mul_backward(Tensor* out) {
+    for (int i = 0; i < out->data->size; i++) {
+        out->prevs[0]->grad->values[i] += out->grad->values[i] * out->prevs[1]->data->values[i];
+        out->prevs[1]->grad->values[i] += out->grad->values[i] * out->prevs[0]->data->values[i];
+    }
+}
+```
+
+And then we can multiply the result with `mul_out.grad` to get `a.grad`.
+
+We will code a new function to handle this:
+
+```c
+void backward(Tensor* t) {
+    // assumes that the grad of `t` has been computed
+    // and computes the grad for tensors in `t->prevs`
+    // then calls the backward function on prev tensors
+    if (t->op == MUL) {
+        mul_backward(t);
+    } else if (t->op == MEAN) {
+        mean_backward(t);
+    }
+    for (int i = 0; i < t->num_prevs; i++) {
+        backward(t->prevs[i]);
+    }
+}
+```
+
+So, let's say we start with 2 or 3 tensors, do a bunch of operations on them and come up with one final loss tensor.
+We can simply call `backward` on the loss tensor, and compute the gradients for every tensor that was involved in computing the loss tensor, including the initial tensors.
+
+This procedure of automatically calculating gradients for all the involved tensors is called autograd.
+
+## Implementing operations
+
+Right now, the backward function can work backwards through `mean` and `mul` operations to calculate `grad` values for all the tensors involved.
+
+To extend this with more operations, we need 3 things:
+
+1. A functon for the operation, or the forward part of the operation.
+2. A backward function for the operation.
+3. Adding the backward function to the code of `void backward(Tensor* t);`
+
+Here are some examples:
+
+```c
+Tensor* logsoftmax(Arr* inp) {
+    // inp and out are both of shape (B,C)
+    float* d = (float*) malloc(inp->data->size * sizeof(float));
+    for (int b = 0; b < inp->data->shape[0]; b++) {
+        float maxv = inp->data->values[b * inp->data->strides[0]];
+        for (int c = 1; c < inp->data->shape[1]; c++) {
+            int pos = b * inp->data->strides[0] + c * inp->data->strides[1];
+            if (maxv < inp->data->values[pos]) {
+                maxv = inp->data->values[pos];
+            }
+        }
+        float sumexp = 0.0f;
+        for (int c = 0; c < inp->data->shape[1]; c++) {
+            int pos = b * inp->data->strides[0] + c * inp->data->strides[1];
+            float expval = expf(inp->data->values[pos] - maxv);
+            sumexp += expval;
+        }
+        for (int c = 0; c < inp->data->shape[1]; c++) {
+            int pos = b * inp->data->strides[0] + c * inp->data->strides[1];
+            d[pos] = inp->data->values[pos] - maxv - logf(sumexp);
+        }
+    }
+    Tensor* t = create_tensor(d, inp->data->shape, inp->data->ndim);
+    t->op = LOGSOFTMAX;
+    t->num_prevs = 1;
+    t->prevs[0] = inp;
+    return t;
+}
+
+void logsoftmax_backward(Tensor* out) {
+    // out is of shape (B,C)
+    for (int b = 0; b < out->data->shape[0]; b++) {
+        float gradsum = 0.0f;
+        for (int c = 0; c < out->data->shape[1]; c++) {
+            gradsum += out->grad->values[b * out->shape[1] + c];
+        }
+        for (int c = 0; c < out->data->shape[1]; c++) {
+            int pos = b*out->data->shape[1] + c;
+            out->prevs[0]->grad->values[pos] += out->grad->values[pos] - expf(out->data->values[pos]) * gradsum;
+        }
+    }
+}
+```
+
+

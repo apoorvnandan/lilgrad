@@ -2,6 +2,7 @@
 #include <math.h>
 #include <stdlib.h>
 #include <string.h>
+#include <time.h>
 #define MAX_PREVS 3
 #define MAX_ARGS 5
 #define MAX_PARAM_TENSORS 10
@@ -12,7 +13,7 @@
 #define RELU 3
 #define LOGSOFTMAX 4
 
-#define MAX_BLOCKS 10000
+#define MAX_BLOCKS 500
 
 typedef struct {
     void* memory;
@@ -38,7 +39,7 @@ void init_mem_pool() {
 
 void* pool_malloc(size_t size) {
     for(int i = 0; i < POOL.count; i++) {
-        if(POOL.blocks[i].is_free && POOL.blocks[i].size == size) {
+        if(POOL.blocks[i].is_free == 1 && POOL.blocks[i].size == size) {
             POOL.blocks[i].is_free = 0;
             return POOL.blocks[i].memory;
         }
@@ -163,18 +164,18 @@ Arr* create_arr(float* data, int* shape, int ndim) {
 }
 
 Arr* create_arr_zeros(int* shape, int ndim) {
-    Arr* arr = (Arr*) pool_malloc(sizeof(Arr));
+    Arr* arr = (Arr*) malloc(sizeof(Arr));
     if (!arr) return NULL;
 
     arr->ndim = ndim;
-    arr->shape = (int*)pool_malloc(ndim * sizeof(int));
+    arr->shape = (int*) malloc(ndim * sizeof(int));
     if (!arr->shape) {
         free(arr);
         return NULL;
     }
     memcpy(arr->shape, shape, ndim * sizeof(int));
 
-    arr->strides = (int*)pool_malloc(ndim * sizeof(int));
+    arr->strides = (int*) malloc(ndim * sizeof(int));
     if (!arr->strides) {
         free(arr->shape);
         free(arr);
@@ -187,7 +188,8 @@ Arr* create_arr_zeros(int* shape, int ndim) {
         arr->size *= shape[i];
     }
 
-    arr->values = (float*)pool_calloc(arr->size * sizeof(float));
+    // arr->values = (float*)pool_calloc(arr->size * sizeof(float));
+    arr->values = (float*) calloc(arr->size, sizeof(float));
     if (!arr->values) {
         free(arr->strides);
         free(arr->shape);
@@ -200,7 +202,7 @@ Arr* create_arr_zeros(int* shape, int ndim) {
 
 Tensor* create_tensor(float* data, int* shape, int ndim) {
     Arr* d = create_arr(data, shape, ndim);
-    Tensor* t = (Tensor*)pool_malloc(sizeof(Tensor));
+    Tensor* t = (Tensor*)malloc(sizeof(Tensor));
     t->data = d;
     t->grad = create_arr_zeros(shape, ndim);
     t->op = -1;
@@ -210,7 +212,7 @@ Tensor* create_tensor(float* data, int* shape, int ndim) {
 
 Tensor* create_zero_tensor(int* shape, int ndim) {
     Arr* d = create_arr_zeros(shape, ndim);
-    Tensor* t = (Tensor*)pool_malloc(sizeof(Tensor));
+    Tensor* t = (Tensor*)malloc(sizeof(Tensor));
     t->data = d;
     t->grad = create_arr_zeros(shape, ndim);
     t->op = -1;
@@ -221,22 +223,22 @@ Tensor* create_zero_tensor(int* shape, int ndim) {
 void free_arr(Arr* a) {
     if (a == NULL) return;
     if (a->values != NULL) {
-        pool_free(a->values);
+        free(a->values);
     }
     if (a->shape != NULL) {
-        pool_free(a->shape);
+        free(a->shape);
     }
     if (a->strides != NULL) {
-        pool_free(a->strides);
+        free(a->strides);
     }
-    pool_free(a);
+    free(a);
 }
 
 void free_tensor(Tensor* t) {
     if (t == NULL) return;
     if (t->data != NULL) free_arr(t->data);
     if (t->grad != NULL) free_arr(t->grad);
-    pool_free(t);
+    free(t);
 }
 
 
@@ -261,11 +263,10 @@ void backward(Tensor* t) {
 }
 
 Tensor* mul(Tensor* a, Tensor* b) {
-    float* d = (float*) malloc(a->data->size * sizeof(float));
+    Tensor* t = create_zero_tensor(a->data->shape, a->data->ndim);
     for (int i = 0; i < a->data->size; i++) {
-        d[i] = a->data->values[i] * b->data->values[i];
+        t->data->values[i] = a->data->values[i] * b->data->values[i];
     }
-    Tensor* t = create_tensor(d, a->data->shape, a->data->ndim);
     t->op = MUL;
     t->num_prevs = 2;
     t->prevs[0] = a;
@@ -281,11 +282,10 @@ void mul_backward(Tensor* out) {
 }
 
 Tensor* mean(Tensor* t) {
-    float* d = (float*) malloc(sizeof(float));
+    Tensor* m = create_zero_tensor((int[]){1}, 1);
     float s = 0.0f;
     for(int i = 0; i < t->data->size; i++) s += t->data->values[i];
-    d[0] = s/t->data->size;
-    Tensor* m = create_tensor(d, (int[]){1}, 1);
+    m->data->values[0] = s/t->data->size;
     m->op = MEAN;
     m->num_prevs = 1;
     m->prevs[0] = t;
@@ -300,7 +300,7 @@ void mean_backward(Tensor* out) {
 
 Tensor* logsoftmax(Tensor* inp) {
     // inp and out are both of shape (B,C)
-    float* d = (float*) malloc(inp->data->size * sizeof(float));
+    Tensor* t = create_zero_tensor(inp->data->shape, inp->data->ndim);
     for (int b = 0; b < inp->data->shape[0]; b++) {
         float maxv = inp->data->values[b * inp->data->strides[0]];
         for (int c = 1; c < inp->data->shape[1]; c++) {
@@ -317,10 +317,9 @@ Tensor* logsoftmax(Tensor* inp) {
         }
         for (int c = 0; c < inp->data->shape[1]; c++) {
             int pos = b * inp->data->strides[0] + c * inp->data->strides[1];
-            d[pos] = inp->data->values[pos] - maxv - logf(sumexp);
+            t->data->values[pos] = inp->data->values[pos] - maxv - logf(sumexp);
         }
     }
-    Tensor* t = create_tensor(d, inp->data->shape, inp->data->ndim);
     t->op = LOGSOFTMAX;
     t->num_prevs = 1;
     t->prevs[0] = inp;
@@ -342,11 +341,10 @@ void logsoftmax_backward(Tensor* out) {
 }
 
 Tensor* relu(Tensor* inp) {
-    float* d = (float*) malloc(inp->data->size * sizeof(float));
+    Tensor* t = create_zero_tensor(inp->data->shape, inp->data->ndim);
     for (int i = 0; i < inp->data->size; i++) {
-        d[i] = (inp->data->values[i] > 0) ? inp->data->values[i] : 0;
+        t->data->values[i] = (inp->data->values[i] > 0) ? inp->data->values[i] : 0;
     }
-    Tensor* t = create_tensor(d, inp->data->shape, inp->data->ndim);
     t->op = RELU;
     t->num_prevs = 1;
     t->prevs[0] = inp;
@@ -364,7 +362,7 @@ Tensor* matmul(Tensor* a, Tensor* b) {
     int P = a->data->shape[0];
     int Q = a->data->shape[1];
     int R = b->data->shape[1];
-    float* d = (float*) malloc(P * R * sizeof(float));
+    Tensor* t = create_zero_tensor((int[]) {P, R}, 2);
     for (int i = 0; i < P; i++) {
         for (int j = 0; j < R; j++) {
             float tmp = 0.0f;
@@ -374,10 +372,9 @@ Tensor* matmul(Tensor* a, Tensor* b) {
                 tmp += a->data->values[pos_a] * b->data->values[pos_b];
             }
             int pos_c = i * R + j;
-            d[pos_c] = tmp;
+            t->data->values[pos_c] = tmp;
         }
     }
-    Tensor* t = create_tensor(d, (int[]) {P, R}, 2);
     t->op = MATMUL;
     t->num_prevs = 2;
     t->prevs[0] = a;

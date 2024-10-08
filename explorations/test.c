@@ -1,5 +1,10 @@
 #include "tensor.h"
 #include <time.h>
+#include <sys/time.h>
+
+void get_time(struct timeval *t) {
+    gettimeofday(t, NULL);
+}
 
 void load_csv(Tensor* x, Tensor* y, char* filename) {
     FILE *file = fopen(filename, "r");
@@ -74,8 +79,8 @@ void get_random_batch(Tensor* batch_x, Tensor* batch_y, Tensor* x, Tensor* y, in
 }
 
 int main() {
-    clock_t start, end;
-    double cpu_time_used;
+    
+
     init_mem_pool();
     printf("%d %d\n", POOL.blocks[8].is_free, POOL.blocks[9].is_free);
     Tensor* x = create_zero_tensor((int[]){60000,784}, 2);
@@ -86,21 +91,28 @@ int main() {
 
     printf("loaded csv\n");
     
-    Tensor* w1 = create_zero_tensor((int[]){784,1024}, 2);
-    Tensor* w2 = create_zero_tensor((int[]){1024,10}, 2);
+    Tensor* w1 = create_zero_tensor((int[]){784,128}, 2);
+    Tensor* w2 = create_zero_tensor((int[]){128,10}, 2);
 
     for (int i = 0; i < w1->data->size; i++) w1->data->values[i] = kaiming_uniform(784);
-    for (int i = 0; i < w2->data->size; i++) w2->data->values[i] = kaiming_uniform(1024);
+    for (int i = 0; i < w2->data->size; i++) w2->data->values[i] = kaiming_uniform(128);
 
     int B = 128;
     float lr = 0.005;
     Tensor* batch_x = create_zero_tensor((int[]){B, 784}, 2);
     Tensor* batch_y = create_zero_tensor((int[]){B, 10}, 2);
 
+
+    struct timeval start, end;
+    double elapsed_time;
+    get_time(&start);
+    printf("Start Time: %ld.%06ld seconds\n", start.tv_sec, start.tv_usec);
+
+
     for (int i = 0; i < 1000; i++) {
         get_random_batch(batch_x, batch_y, x, y, B);
 
-        start = clock(); 
+        // start = clock(); 
         Tensor* w1_out = matmul(batch_x, w1);
         Tensor* relu_out = relu(w1_out);
         Tensor* w2_out = matmul(relu_out, w2);
@@ -109,12 +121,12 @@ int main() {
         Tensor* loss = mean(mul_out);
         loss->grad->values[0] = 1.0f;
         backward(loss);
-        end = clock();
+        // end = clock();
 
         if (i % 100 == 0) {
-            printf("batch: %d loss: %f - ", i, loss->data->values[0]);
-            cpu_time_used = ((double) (end - start)) / CLOCKS_PER_SEC;
-            printf("Time taken: %f seconds %d in pool\n", cpu_time_used, POOL.count);
+            printf("batch: %d loss: %f \n", i, loss->data->values[0]);
+            // cpu_time_used = ((double) (end - start)) / CLOCKS_PER_SEC;
+            // printf("Time taken: %f seconds %d in pool\n", cpu_time_used, POOL.count);
         }
 
         for (int i = 0; i < w1->data->size; i++) {
@@ -133,6 +145,14 @@ int main() {
         free_tensor(mul_out);
         free_tensor(loss);
     }
+
+    get_time(&end);
+    printf("End Time:   %ld.%06ld seconds\n", end.tv_sec, end.tv_usec);
+
+    // Calculate elapsed time
+    elapsed_time = (end.tv_sec - start.tv_sec) + 
+                   (end.tv_usec - start.tv_usec) / 1e6;
+    printf("Elapsed Time: %.6f seconds\n", elapsed_time);
 
     return 0;
 }

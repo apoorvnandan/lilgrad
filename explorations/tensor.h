@@ -2,7 +2,7 @@
 #include <math.h>
 #include <stdlib.h>
 #include <string.h>
-#include <time.h>
+#include <omp.h>
 #define MAX_PREVS 3
 #define MAX_ARGS 5
 #define MAX_PARAM_TENSORS 10
@@ -14,6 +14,7 @@
 #define LOGSOFTMAX 4
 
 #define MAX_BLOCKS 500
+#define USE_POOL 1
 
 typedef struct {
     void* memory;
@@ -87,6 +88,7 @@ typedef struct {
 typedef union {
     int ival;
     float fval;
+    int* ilist;
 } Arg;
 
 typedef struct Tensor {
@@ -116,6 +118,21 @@ Tensor* logsoftmax(Tensor* inp);
 void logsoftmax_backward(Tensor* out);
 Tensor* relu(Tensor* inp);
 void relu_backward(Tensor* out);
+Tensor* conv2d(Tensor* inp, Tensor* kernel);
+Tensor* maxpool2d(Tensor* inp, int kernel_size, int stride);
+void conv2d_backward(Tensor* out);
+void maxpool2d_backward(Tensor* out);
+Tensor* rms_norm(Tensor* inp, Tensor* w);
+void rms_norm_backward(Tensor* out);
+Tensor* view(Tensor* a, int* out_shape, int out_ndim);
+void view_backward(Tensor* a);
+Tensor* softmax(Tensor* a, int dim);
+void softmax_backward(Tensor* out);
+Tensor* cat(Tensor** l, int len);
+void cat_backward(Tensor* out);
+Tensor* silu(Tensor* inp);
+void silu_backward(Tensor* out);
+
 void print_tensor(Tensor* t);
 
 
@@ -188,8 +205,10 @@ Arr* create_arr_zeros(int* shape, int ndim) {
         arr->size *= shape[i];
     }
 
-    // arr->values = (float*)pool_calloc(arr->size * sizeof(float));
-    arr->values = (float*) calloc(arr->size, sizeof(float));
+    if (USE_POOL == 1)
+        arr->values = (float*)pool_calloc(arr->size * sizeof(float));
+    else
+        arr->values = (float*) calloc(arr->size, sizeof(float));
     if (!arr->values) {
         free(arr->strides);
         free(arr->shape);
@@ -223,7 +242,8 @@ Tensor* create_zero_tensor(int* shape, int ndim) {
 void free_arr(Arr* a) {
     if (a == NULL) return;
     if (a->values != NULL) {
-        free(a->values);
+        if (USE_POOL == 1) pool_free(a->values);
+        else free(a->values);
     }
     if (a->shape != NULL) {
         free(a->shape);
@@ -363,6 +383,7 @@ Tensor* matmul(Tensor* a, Tensor* b) {
     int Q = a->data->shape[1];
     int R = b->data->shape[1];
     Tensor* t = create_zero_tensor((int[]) {P, R}, 2);
+    #pragma omp parallel for
     for (int i = 0; i < P; i++) {
         for (int j = 0; j < R; j++) {
             float tmp = 0.0f;
@@ -390,6 +411,7 @@ void matmul_backward(Tensor* out) {
     int R = out->prevs[1]->data->shape[1];
     
     // dc x b.T  (P,R) x (R,Q) => (P,Q)
+    #pragma omp parallel for
     for (int i = 0; i < P; i++) {
         for (int j = 0; j < Q; j++) {
             float tmp = 0.0f;
@@ -404,6 +426,7 @@ void matmul_backward(Tensor* out) {
     }
     
     // a.T x dc  (Q,P) x (P,R) => (Q,R)
+    #pragma omp parallel for
     for (int i = 0; i < Q; i++) {
         for (int j = 0; j < R; j++) {
             float tmp = 0.0f;

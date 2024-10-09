@@ -14,7 +14,6 @@ Moreover, building this from scratch, and in C, does not mean that the code and 
 * Optimising the loss - Autograd
 * Implementing operations
 * Training neural networks
-* Examples
 
 ## What are neural networks?
 
@@ -296,6 +295,7 @@ void backward(Tensor* t) {
     } else if (t->op == MEAN) {
         mean_backward(t);
     }
+    // add more ops here
     for (int i = 0; i < t->num_prevs; i++) {
         backward(t->prevs[i]);
     }
@@ -317,7 +317,100 @@ To extend this with more operations, we need 3 things:
 2. A backward function for the operation.
 3. Adding the backward function to the code of `void backward(Tensor* t);`
 
-Here are some examples:
+Both the forward and backward functions basically involve using shape and strides to operate on N-D arrays.
+
+But what are strides?
+
+Let's say you have a tensor of shape: `(4,2,2,3)`. 4 dimensions - `[0,1,2,3]`. And the values are all stored in a long 1D array.
+
+When you move one step forward on a dimension, you need to move a certain number of steps forward in the 1D array where the values are stored.
+
+For dimension 3, e.g. going from (1,0,1,1) to (1,0,1,2), you would move exactly 1 step. 
+
+For dimension 0, however, going from (0,1,1,0) to (1,1,1,0) would take you 3 * 2 * 2 = 12 steps forward on the 1D values array.
+
+<img width="1385" alt="image" src="https://github.com/user-attachments/assets/d0e21905-c933-4f5b-b4b6-3d539625add7">
+
+Strides dictate the number of steps you will move forward on the 1D flattened values array when you move 1 step forward on any of the dimensions.
+
+Each dimension has its own stride. Something which can be calculated using the shape, which contains the size of each dimension.
+
+```c
+int s = 1;
+for (int i = ndim - 1; i >= 0; i--) {
+    arr->strides[i] = s;
+    s *= shape[i];
+}
+```
+
+To find the value of a tensor at a position `(i,j,k, ...)` you simply multiply each index with the stride of that dimension, and then look up the value at that position in your values array.
+
+Here is an example of coding a matrix multiplication operation for two 2-D tensors.
+
+```c
+Tensor* matmul(Tensor* a, Tensor* b) {
+    // (P,Q) x (Q,R) = (P,R)
+    int P = a->data->shape[0];
+    int Q = a->data->shape[1];
+    int R = b->data->shape[1];
+    Tensor* t = create_zero_tensor((int[]) {P, R}, 2);
+    for (int i = 0; i < P; i++) {
+        for (int j = 0; j < R; j++) {
+            float tmp = 0.0f;
+            for (int k = 0; k < Q; k++) {
+                int pos_a = i * a->data->strides[0] + k * a->data->strides[1];
+                int pos_b = k * b->data->strides[0] + j * b->data->strides[1];
+                tmp += a->data->values[pos_a] * b->data->values[pos_b];
+            }
+            int pos_c = i * R + j;
+            t->data->values[pos_c] = tmp;
+        }
+    }
+    t->op = MATMUL;
+    t->num_prevs = 2;
+    t->prevs[0] = a;
+    t->prevs[1] = b;
+    return t;
+}
+
+
+void matmul_backward(Tensor* out) {
+    // a (P,Q), b (Q,R), c (P, R)
+    int P = out->prevs[0]->data->shape[0];
+    int Q = out->prevs[0]->data->shape[1];
+    int R = out->prevs[1]->data->shape[1];
+    
+    // dc x b.T  (P,R) x (R,Q) => (P,Q)
+    for (int i = 0; i < P; i++) {
+        for (int j = 0; j < Q; j++) {
+            float tmp = 0.0f;
+            for (int k = 0; k < R; k++) {
+                // (k,j) in b.T is (j,k) in b
+                int pos_b = j * out->prevs[1]->data->strides[0] + k * out->prevs[1]->data->strides[1]; 
+                tmp += out->grad->values[i * R + k] * out->prevs[1]->data->values[pos_b];
+            }
+            int pos_da = i * Q + j;
+            out->prevs[0]->grad->values[pos_da] = tmp;
+        }
+    }
+    
+    // a.T x dc  (Q,P) x (P,R) => (Q,R)
+    for (int i = 0; i < Q; i++) {
+        for (int j = 0; j < R; j++) {
+            float tmp = 0.0f;
+            for (int k = 0; k < P; k++) {
+                // (i,k) in a.T is (k,i) in a
+                int pos_a = k * out->prevs[0]->data->strides[0] + i * out->prevs[0]->data->strides[1]; 
+                tmp += out->grad->values[k * R + j] * out->prevs[0]->data->values[pos_a];
+            }
+            int pos_db = i * R + j;
+            out->prevs[1]->grad->values[pos_db] = tmp;
+        }
+    }   
+}
+```
+
+And here are two more examples of operations which just turn out to be useful when creating these neural network functions. (more on this later)
 
 ```c
 Tensor* logsoftmax(Arr* inp) {
@@ -362,6 +455,146 @@ void logsoftmax_backward(Tensor* out) {
         }
     }
 }
+
+Tensor* relu(Tensor* inp) {
+    Tensor* t = create_zero_tensor(inp->data->shape, inp->data->ndim);
+    for (int i = 0; i < inp->data->size; i++) {
+        t->data->values[i] = (inp->data->values[i] > 0) ? inp->data->values[i] : 0;
+    }
+    t->op = RELU;
+    t->num_prevs = 1;
+    t->prevs[0] = inp;
+    return t;
+}
+
+void relu_backward(Tensor* out) {
+    for (int i = 0; i < out->data->size; i++) {
+        out->prevs[0]->grad->values[i] = (out->prevs[0]->data->values[i] > 0) ? out->grad->values[i] : 0;
+    }
+}
 ```
 
+## Training neural networks
 
+Our tensor library is good enough to train some simple neural nets now! Let's go through one example. Remember, training is just the process of finding the optimal values for the parameters of the function.
+
+Objective: Train a neural network to identify the digit (one of 0,1,2...9) present in the input image. The input image will contain the picture of a handwritten digit. To do this, we have a bunch of input images, which are already manually labelled. This is our training data. The image is the input to our function, and the label is what we can use to calculate the loss value. The data in this case is coming from the MNIST dataset, which is famous for being the "hello world" of machine learning datasets.
+
+Now, from this data, we have 60,000 labelled images. Each image has 28 x 28 = 784 pixels. Which we will arrange in a nice 784 sized 1-D tensor. Each pixel is simply an integer between 0 and 255, as these are grayscale images. We will divide all values by 255 to make them into a float between 0 and 1. Why? Let me explain the process first and then we'll get into these details.
+
+Each label is just a number between 0 and 9, and we will turn them into 10 sized 1-D tensors. 10? Umm, it's much easier to show then tell:
+
+```
+0 -> [1, 0, 0, 0, 0, 0, 0, 0, 0, 0]
+1 -> [0, 1, 0, 0, 0, 0, 0, 0, 0, 0]
+2 -> [0, 0, 1, 0, 0, 0, 0, 0, 0, 0]
+3 -> [0, 0, 0, 1, 0, 0, 0, 0, 0, 0]
+4 -> [0, 0, 0, 0, 1, 0, 0, 0, 0, 0]
+5 -> [0, 0, 0, 0, 0, 1, 0, 0, 0, 0]
+6 -> [0, 0, 0, 0, 0, 0, 1, 0, 0, 0]
+7 -> [0, 0, 0, 0, 0, 0, 0, 1, 0, 0]
+8 -> [0, 0, 0, 0, 0, 0, 0, 0, 1, 0]
+9 -> [0, 0, 0, 0, 0, 0, 0, 0, 0, 1]
+```
+
+Turning numbers into arrays like this is called one-hot encoding.
+
+So now, we have pixels from 60,000 images which stack together will make a tensor of size (60000,784) and 60,000 labels which make a tensor of size (60000,10).
+
+The training process is done in batches. The batch size is something you choose, along with a bunch of other settings before you start training. How you chosse these values is something beyond the scope of this article. So I'll just give you some good default values. Batch size will be 128.
+
+This means that we will pick 128 values at random from the images and their corresponding labels to create two tensors:
+
+`batch_x` of shape (128, 784)
+
+`batch_y` of shape (128, 10)
+
+Training process: 
+1. We will define a neural network similar to the `cat_or_dog` example, along with a loss function.
+2. We will select a random batch from our training data to create `batch_x` and `batch_y`.
+3. We will apply the neural network followed by the loss function on the labelled input images
+4. We will calculate the gradients for the parameters of our neural network using the `backward` funciton.
+5. We will change the values of the paramaters based on the gradients (so that the loss value goes down)
+6. Log the loss value and go back to step 2.
+7. Once the loss value is sufficiently close to zero, we will stop this process and end up with an accurate neural network.
+
+This entire process is repeated several times (several = few thousand) till the loss value comes down. We call this the training loop.
+
+Here is what this looks like in code.
+
+```c
+for (int i = 0; i < 1000; i++) {
+    get_random_batch(batch_x, batch_y, x, y, B);
+
+    // these 4 lines are equivalent of calling our neural network function
+    // on the arguments: `batch_x`, `w1` and `w2`.
+    Tensor* w1_out = matmul(batch_x, w1);
+    Tensor* relu_out = relu(w1_out);
+    Tensor* w2_out = matmul(relu_out, w2);
+    Tensor* lout = logsoftmax(w2_out);
+
+    // these two lines are the equivalent of calling our (simple) loss function
+    Tensor* mul_out = mul(lout, batch_y);
+    Tensor* loss = mean(mul_out);
+
+    // calculate the gradients
+    loss->grad->values[0] = 1.0f;
+    backward(loss);
+
+    if (i % 100 == 0) {
+        printf("batch: %d loss: %f \n", i, loss->data->values[0]);
+    }
+
+    // update the parameter values
+    for (int i = 0; i < w1->data->size; i++) {
+        w1->data->values[i] -= w1->grad->values[i] * lr;
+        w1->grad->values[i] = 0.0f;
+    }
+    for (int i = 0; i < w2->data->size; i++) {
+        w2->data->values[i] -= w2->grad->values[i] * lr;
+        w2->grad->values[i] = 0.0f;
+    }
+
+    free_tensor(w1_out);
+    free_tensor(relu_out);
+    free_tensor(w2_out);
+    free_tensor(lout);
+    free_tensor(mul_out);
+    free_tensor(loss);
+}
+```
+
+You may notice that we have a new variable `lr` in the portion of the code that updates the parameter values.
+
+`lr` stands for learning rate. This is another one of the settings you choose before you start your training. We set this to a small value typically. In this example, it is set to 0.005.
+
+Okay, but what are the intial values of `w1` and `w2` - the parameters of our neural network. Well, you you intialise them with random numbers. However, random numbers created with a specific process. 
+
+At this point, let me explain something about training neural networks, which makes this whole process a lot more experimental than you would expect.
+
+In order to train a neural network for a given task, we have to make a lot of choices.
+
+- The code inside neural net function, which is also known as the architecture, which includes how many parameters we have, and how we use them all with the input to calculate the output.
+- The way we initialise the parameter values.
+- The learning rate.
+- The way we update the parameter values using the learning rate. e.g. we can change the learning rate for each batch.
+- The batch size.
+- The criteria for stopping the training loop.
+
+There can be more, but you get the idea. The training process for any neural network, is very brittle. It feels pretty magical when it works, but it only works for some specific choices. And there is a good amount of maths that tells you what these good choices are, but that is not something I will be going into here. Just know that experimenting with these choices is what you do to come up with a neural network that solved your task.
+
+For this example, we have defined a specifc function, which is our neural network. We picked specifc operations like `logsoftmax`. We have picked a specific way to create the random numbers for parameters. We have picked a specific learning rate and batch size. And we have picked a specific way to update the parameter values at each iteration of the training loop. 
+
+There are other choices that work as well. But what we have is a good default to demonstrate how this all works.
+
+You can go through the entire code in the files `tensor.h` and `test.c` now. That's all. I hope you enjoyed reading!
+
+# thank you
+
+if you have any questions or feedback, you can DM me on twitter/X, or create an issue on this repo.
+
+my twitter: [https://twitter.com/_apoorvnandan](https://twitter.com/_apoorvnandan)
+
+if you want to support my work:
+
+buy me a coffee: [https://buymeacoffee.com/apoorvn](https://buymeacoffee.com/apoorvn)

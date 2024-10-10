@@ -1,6 +1,6 @@
 # Creating a tiny tensor library in C
 
-Documenting my pov while building this. The objective is to help people understand neural networks from absolute scratch. No pytorch. No numpy. 
+Documenting my pov while building this. The objective is to help people understand neural networks from absolute scratch. No pytorch. No numpy. Just maths and C.
 
 Should be readable for anyone who knows programming **even if you are not familiar with machine learning or neural networks at all**. 
 
@@ -345,6 +345,12 @@ for (int i = ndim - 1; i >= 0; i--) {
 
 To find the value of a tensor at a position `(i,j,k, ...)` you simply multiply each index with the stride of that dimension, and then look up the value at that position in your values array.
 
+Strides are really helpful when it comes to operations where the tensor needs to be reshaped and rearranged. e.g. a sliding window operation can be performed by simply changing the shape and stride values. You don't need to touch the values array at all.
+
+<img width="766" alt="image" src="https://github.com/user-attachments/assets/6147b3f9-63e0-4a4a-9b0c-03aab1f8c2e1">
+
+The entire point I'm trying to convey in this section is that you need stride and shape values along with the 1D array of items to be able to perform operations on N-D tensors. 
+
 Here is an example of coding a matrix multiplication operation for two 2-D tensors.
 
 ```c
@@ -575,6 +581,7 @@ At this point, let me explain something about training neural networks, which ma
 In order to train a neural network for a given task, we have to make a lot of choices.
 
 - The code inside neural net function, which is also known as the architecture, which includes how many parameters we have, and how we use them all with the input to calculate the output.
+- The way we prepare our input tensors (e.g. dividing the pixels by 255)
 - The way we initialise the parameter values.
 - The learning rate.
 - The way we update the parameter values using the learning rate. e.g. we can change the learning rate for each batch.

@@ -4,6 +4,8 @@ Documenting my pov while building this. The objective is to help people understa
 
 Should be readable for anyone who knows programming **even if you are not familiar with machine learning or neural networks at all**. 
 
+<img width="1383" alt="image" src="https://github.com/user-attachments/assets/f0de68cd-dc7b-4592-b68a-265793c2c6f9">
+
 Moreover, building this from scratch, and in C, does not mean that the code and the APIs will not be user friendly. In fact, we'll create the needed abstractions and show just how easy it is to code and train different neural network architectures with this tiny library.
 
 ## Contents:
@@ -329,7 +331,7 @@ For dimension 3, e.g. going from (1,0,1,1) to (1,0,1,2), you would move exactly 
 
 For dimension 0, however, going from (0,1,1,0) to (1,1,1,0) would take you 3 * 2 * 2 = 12 steps forward on the 1D values array.
 
-<img width="1385" alt="image" src="https://github.com/user-attachments/assets/d0e21905-c933-4f5b-b4b6-3d539625add7">
+<img width="901" alt="image" src="https://github.com/user-attachments/assets/84231c25-1824-49b5-8cfa-8f24d206c781">
 
 Strides dictate the number of steps you will move forward on the 1D flattened values array when you move 1 step forward on any of the dimensions.
 

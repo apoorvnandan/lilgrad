@@ -54,7 +54,7 @@ $$
 \text{log-softmax}(x_i) = \log \left( \frac{e^{x_i}}{\sum_{j} e^{x_j}} \right)
 $$
 
-The weirdest thing though, is that this function, for very specific values of `w1` and `w2`, will actually give you the correct output for like 99% of images. If you're completely new to machine learning and neural networks, you might be surprised. Infact, I'll link the exact values of w1 and w2 along with the code, so you can test this on a bunch of cat and dog images of a certain size.
+The weirdest thing though, is that this function, for very specific values of `w1` and `w2`, will actually give you the correct output for like 99% of images! If you're completely new to machine learning and neural networks, you might be surprised. But defining these functions and finding the optimal values for `w1`, `w2`, etc. is pretty much what deep learning is all about.
 
 Functions like these are called neural networks. And the additional inputs like `w1` and `w2` are called parameters or weights. When you "train" a neural network, you find the "correct" values of these parameters for the task you're trying to solve. 
 
@@ -111,7 +111,7 @@ Don't worry about this code, right now. We'll get to N-D array operations in the
 
 Going back to the initial example, our input, along with the parameters `w1` and `w2` are all instances of tensors. The challenge here is to find those specific values for `w1` and `w2` which make the function actually work.
 
-In order to do that, we define a different function, one that operates on the outputs of our neural network function and the expected outputs and returns a score that represents how good or bad the neural network is.
+In order to do that, we collect some data of accurate inputs and outputs for our function (the neural network). e.g. images of cats and dogs along with labels. Then, we define a different function, one that operates on the outputs of our neural network and the labelled outputs, and returns a score that represents how good or bad the neural network is.
 
 Here is an example:
 
@@ -484,9 +484,11 @@ void relu_backward(Tensor* out) {
 
 Our tensor library is good enough to train some simple neural nets now! Let's go through one example. Remember, training is just the process of finding the optimal values for the parameters of the function.
 
-Objective: Train a neural network to identify the digit (one of 0,1,2...9) present in the input image. The input image will contain the picture of a handwritten digit. To do this, we have a bunch of input images, which are already manually labelled. This is our training data. The image is the input to our function, and the label is what we can use to calculate the loss value. The data in this case is coming from the MNIST dataset, which is famous for being the "hello world" of machine learning datasets.
+Objective: Train a neural network to identify the digit (one of 0,1,2...9) present in the input image. The input image will contain the picture of a handwritten digit. To do this, we have a bunch of input images, which are already manually labelled. This is our training data. The image is the input to our function, and the label is what we can use to calculate the loss value. The data in this case is coming from the [MNIST dataset](https://yann.lecun.com/exdb/mnist/), which is famous for being the "hello world" of machine learning datasets.
 
 Now, from this data, we have 60,000 labelled images. Each image has 28 x 28 = 784 pixels. Which we will arrange in a nice 784 sized 1-D tensor. Each pixel is simply an integer between 0 and 255, as these are grayscale images. We will divide all values by 255 to make them into a float between 0 and 1. Why? Let me explain the process first and then we'll get into these details.
+
+![image](https://github.com/user-attachments/assets/84c33ab5-c4bc-43b6-b007-7218cdcc8a45)
 
 Each label is just a number between 0 and 9, and we will turn them into 10 sized 1-D tensors. 10? Umm, it's much easier to show then tell:
 
@@ -595,6 +597,8 @@ For this example, we have defined a specifc function, which is our neural networ
 There are other choices that work as well. But what we have is a good default to demonstrate how this all works.
 
 You can go through the entire code in the files `tensor.h` and `test.c` now. That's all. I hope you enjoyed reading!
+
+In the next part, we'll go over some popular neural network architectures (i.e. function designs) and the intuitions behind them, and using CUDA to do speed up these operations by utilising GPUs!
 
 # thank you
 
